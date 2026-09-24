@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Keeps the CPU/DRAM energy counters alive. On Mac17,14 / macOS 27 the PMGR "Energy Model"
+     CPU/DRAM/ANE counters only advance while a root powermetrics is sampling (IOReport sampling
+     alone does not refresh them, even as root over all channels). iStat Menus' daemon runs
+     powermetrics as well, so this is easy to miss while iStat Menus is installed.
+     Output is discarded; StatMenu reads the counters through IOReport and each channel's own
+     hardware timestamp, so any interval works. -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.justaboringname.fanctld.power</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/bin/powermetrics</string>
+		<string>--samplers</string>
+		<string>cpu_power</string>
+		<string>-i</string>
+		<string>1000</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>Nice</key>
+	<integer>10</integer>
+	<key>StandardOutPath</key>
+	<string>/dev/null</string>
+	<key>StandardErrorPath</key>
+	<string>/dev/null</string>
+</dict>
+</plist>
