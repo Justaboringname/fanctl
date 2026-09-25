@@ -59,6 +59,15 @@ MainActor.assumeIsolated {
         print(url.path)
     }
 
+    // RENDER_HOVER=0…1 draws every chart as if the pointer were at that fraction of its samples,
+    // with the histories filled to capacity so the readout's edge placement shows.
+    ChartHover.preview = ProcessInfo.processInfo.environment["RENDER_HOVER"].flatMap(Double.init)
+    if ChartHover.preview != nil {
+        for _ in 0..<Series.capacity {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            sampler.sampleNow()
+        }
+    }
     let settings = Settings()
     for module in Module.allCases {
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {

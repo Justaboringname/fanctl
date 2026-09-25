@@ -52,14 +52,20 @@ enum ProcMode { case off, prime, sample }
 
 struct ProcLists { var byCPU: [Proc] = [], byPower: [Proc] = [], byMemory: [Proc] = []; var readable = 0, total = 0 }
 
-/// Fixed-length history for the popover charts.
+/// Fixed-length history for the popover charts. Each value keeps its sample time (systemUptime), so
+/// the hover readout can say how old it is even across skipped samples or interval changes.
 struct Series {
     private(set) var values: [Double] = []
+    private(set) var times: [TimeInterval] = []
     static let capacity = 150
-    mutating func add(_ v: Double) {
-        values.append(v)
-        if values.count > Self.capacity { values.removeFirst(values.count - Self.capacity) }
+    mutating func add(_ v: Double, at t: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        values.append(v); times.append(t)
+        if values.count > Self.capacity {
+            values.removeFirst(values.count - Self.capacity); times.removeFirst(times.count - Self.capacity)
+        }
     }
+    /// Seconds between sample i and the newest one.
+    func age(_ i: Int) -> TimeInterval { times.indices.contains(i) ? times[times.count - 1] - times[i] : 0 }
 }
 
 struct Histories {

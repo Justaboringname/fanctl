@@ -118,6 +118,12 @@ enum Fmt {
 
     static func temp(_ v: Double) -> String { v > 0 ? String(format: "%.0f°", v) : "–" }
 
+    /// Age of a chart sample, for the hover readout.
+    static func age(_ seconds: TimeInterval) -> String {
+        let s = Int(seconds.rounded())
+        return s < 1 ? "最新" : s < 60 ? "\(s) 秒前" : String(format: "%d 分 %02d 秒前", s / 60, s % 60)
+    }
+
     /// Network rates, 1000-based like Activity Monitor / iStat.
     static func rate(_ bytesPerSec: Double) -> String {
         switch bytesPerSec {

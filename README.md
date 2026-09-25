@@ -1,6 +1,6 @@
 # fanctl + StatMenu
 
-_Last updated: 2026-09-24_
+_Last updated: 2026-09-25_
 
 > **EN TL;DR** — Fan control and an iStat-Menus-style menu bar monitor for Apple Silicon, written for a Mac Studio (M5 Max, `Mac17,14`, macOS 27) that iStat Menus 7.50, Macs Fan Control and TG Pro did not support yet. `fanctl` is a C CLI plus a small root LaunchDaemon (`fanctld`) that sets fan speed through the SMC, with a thermal guard (any CPU/GPU sensor > 100 °C → fans to max, released below 85 °C). `StatMenu` is an unprivileged SwiftUI menu bar app: CPU, GPU and memory usage **and** power, network rates, and temperatures plus the Mac's own power draw, each with a detail popover. Power is computed from IOReport energy counters over each counter's own hardware timestamps (dividing by the polling interval, as macmon does, makes CPU watts alternate between 0 and 2×). On M5 / macOS 27 the CPU/DRAM/ANE counters only advance while a root `powermetrics` samples, so the installer runs one as a second LaunchDaemon. Whole-system power is the SMC's `PSTR` (12 V DC side of the internal PSU), which **includes** what the USB ports supply to external devices; StatMenu subtracts that (`PU1C`+`PU2C`+`PU3C`+`PUAC`) to show the Mac's own draw. Only tested on one machine — sensor keys and the fan protocol may differ on other Macs. The UI is in Chinese.
 
@@ -58,7 +58,7 @@ fanctl dump [前缀]          # 列出 SMC 键（调试用），如 fanctl dump 
 ## StatMenu
 
 - **菜单栏**（从左到右）：`NET ↑上传 ↓下载`、`CPU 占用 功耗`、`GPU 占用 功耗`、`MEM 占用 功耗(DRAM)`、传感器（CPU/GPU 最高温度 + Mac 本体功耗）。手动调速时温度计图标变成风扇。
-- **面板**：历史曲线；CPU 按簇（M5 Max：6 个超级核心 + 12 个性能核心）分列占用和功耗，各核心占用柱状图；占用最高、耗电最多、内存最多的进程；GPU 渲染/分块器利用率和显存；内存压力、交换、压缩；网络会话累计流量；风扇状态、预设档位和滑条。
+- **面板**：历史曲线（鼠标悬停或拖动，显示该点的数值和距今多久）；CPU 按簇（M5 Max：6 个超级核心 + 12 个性能核心）分列占用和功耗，各核心占用柱状图；占用最高、耗电最多、内存最多的进程；GPU 渲染/分块器利用率和显存；内存压力、交换、压缩；网络会话累计流量；风扇状态、预设档位和滑条。
 - 刷新间隔 1 / 2 / 5 秒可选。数据采集在后台线程；菜单栏图像没变化就不重绘（每次更新都要消耗 macOS MenuBarAgent 的 CPU）。
 
 ## 功耗是怎么测的（踩过的坑）

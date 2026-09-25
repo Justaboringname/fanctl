@@ -20,20 +20,138 @@ enum Module: String, CaseIterable, Identifiable {
 
 // MARK: - building blocks
 
+/// The sample under the pointer on a history chart. ObservableObject + @StateObject: @State is a
+/// macro in the macOS 27 SDK and a Command Line Tools build cannot expand it.
+final class ChartHover: ObservableObject {
+    /// Render tool only: draw every chart as if hovered at this fraction (0…1) of its samples.
+    static var preview: Double?
+    @Published private(set) var index: Int?
+    /// @Published fires on every assignment, so skip the per-pixel no-ops (each one redraws the chart).
+    func set(_ i: Int?) { if i != index { index = i } }
+    func shown(count: Int) -> Int? {
+        guard count > 0 else { return nil }
+        if let i = index { return min(i, count - 1) }
+        return ChartHover.preview.map { Int(($0 * Double(count - 1)).rounded()) }
+    }
+}
+
+/// Tracks the pointer over a chart — hovering, or dragging with the button down — and draws the
+/// readout beside the hovered sample. Lives in .chartOverlay, so it never changes the chart's size
+/// (a size change would resize, and re-anchor, the popover).
+private struct HoverLayer<Readout: View>: View {
+    let proxy: ChartProxy
+    let count: Int
+    @ObservedObject var hover: ChartHover
+    @ViewBuilder let readout: (Int) -> Readout
+
+    var body: some View {
+        GeometryReader { geo in
+            let plot = proxy.plotFrame.map { geo[$0] } ?? CGRect(origin: .zero, size: geo.size)
+            ZStack(alignment: .topLeading) {
+                PointerTracker { x in if let x { pick(x, plot) } else { hover.set(nil) } }
+                if let i = hover.shown(count: count), let x = proxy.position(forX: i) {
+                    BesideX(x: plot.minX + x, area: plot) { readout(i) }.allowsHitTesting(false)
+                }
+            }
+        }
+    }
+
+    private func pick(_ x: CGFloat, _ plot: CGRect) {
+        // Round, not truncate: the nearest sample, not the one to the left. Clamp so the empty
+        // right-hand part of a not yet full history reads the newest sample.
+        guard count > 0, let v = proxy.value(atX: x - plot.minX, as: Double.self) else { return }
+        hover.set(min(max(Int(v.rounded()), 0), count - 1))
+    }
+}
+
+/// Reports the pointer's x while it hovers over (or drags across) the view; nil when it leaves.
+/// AppKit tracking area with .activeAlways rather than SwiftUI's onContinuousHover: clicking a status
+/// item does not make this accessory app active (the previous app stays frontmost), and SwiftUI
+/// hover only fires in the active app — measured: drag worked, hover never did.
+private struct PointerTracker: NSViewRepresentable {
+    let onMove: (CGFloat?) -> Void
+
+    func makeNSView(context: Context) -> TrackingView { TrackingView() }
+    func updateNSView(_ v: TrackingView, context: Context) { v.onMove = onMove }
+
+    final class TrackingView: NSView {
+        var onMove: ((CGFloat?) -> Void)?
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                           owner: self))
+        }
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        private func report(_ e: NSEvent) { onMove?(convert(e.locationInWindow, from: nil).x) }
+        override func mouseEntered(with e: NSEvent) { report(e) }
+        override func mouseMoved(with e: NSEvent) { report(e) }
+        override func mouseDown(with e: NSEvent) { report(e) }
+        override func mouseDragged(with e: NSEvent) { report(e) }
+        override func mouseExited(with e: NSEvent) { onMove?(nil) }
+    }
+}
+
+/// Places its one subview at the top of `area`, just right of x — or left of it when it would not
+/// fit — and never outside `area`.
+private struct BesideX: Layout {
+    let x: CGFloat, area: CGRect
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        proposal.replacingUnspecifiedDimensions()
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let label = subviews.first else { return }
+        let size = label.sizeThatFits(.unspecified), gap: CGFloat = 5
+        var left = x + gap
+        if left + size.width > area.maxX { left = x - gap - size.width }
+        left = max(area.minX, min(left, area.maxX - size.width))
+        label.place(at: CGPoint(x: bounds.minX + left, y: bounds.minY + area.minY + 2),
+                    anchor: .topLeading, proposal: ProposedViewSize(size))
+    }
+}
+
+/// The hover label: the value line(s), then how long ago the sample was taken.
+private struct ReadoutBox<Values: View>: View {
+    let age: TimeInterval
+    @ViewBuilder let values: Values
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            values.font(.system(size: 11, weight: .semibold).monospacedDigit())
+            Text(Fmt.age(age)).font(.system(size: 9)).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 5).padding(.vertical, 3)
+        .background(RoundedRectangle(cornerRadius: 4).fill(.background).shadow(color: .black.opacity(0.18), radius: 1.5, y: 0.5))
+        .fixedSize()
+    }
+}
+
 struct HistoryChart: View {
-    let values: [Double]
+    let series: Series
     var color: Color = .accentColor
     var maxValue: Double? = nil
     var format: (Double) -> String = { String(format: "%.0f", $0) }
+    @StateObject private var hover = ChartHover()
 
     var body: some View {
+        let values = series.values
         let top = maxValue ?? max(values.max() ?? 0, 0.0001) * 1.15
-        Chart(Array(values.enumerated()), id: \.offset) { point in
-            AreaMark(x: .value("t", point.offset), y: .value("v", point.element))
-                .foregroundStyle(color.opacity(0.18))
-            LineMark(x: .value("t", point.offset), y: .value("v", point.element))
-                .foregroundStyle(color)
-                .lineStyle(StrokeStyle(lineWidth: 1.3))
+        let hovered = hover.shown(count: values.count)
+        Chart {
+            ForEach(Array(values.enumerated()), id: \.offset) { point in
+                AreaMark(x: .value("t", point.offset), y: .value("v", point.element))
+                    .foregroundStyle(color.opacity(0.18))
+                LineMark(x: .value("t", point.offset), y: .value("v", point.element))
+                    .foregroundStyle(color)
+                    .lineStyle(StrokeStyle(lineWidth: 1.3))
+            }
+            if let i = hovered {
+                RuleMark(x: .value("t", i)).foregroundStyle(Color.primary.opacity(0.3)).lineStyle(StrokeStyle(lineWidth: 1))
+                if values[i].isFinite {
+                    PointMark(x: .value("t", i), y: .value("v", values[i])).foregroundStyle(color).symbolSize(22)
+                }
+            }
         }
         .chartXScale(domain: 0...max(Series.capacity - 1, values.count - 1))
         .chartYScale(domain: 0...top)
@@ -44,29 +162,48 @@ struct HistoryChart: View {
                 AxisValueLabel { if let d = v.as(Double.self) { Text(format(d)).font(.system(size: 8)) } }
             }
         }
+        .chartOverlay { proxy in
+            HoverLayer(proxy: proxy, count: values.count, hover: hover) { i in
+                ReadoutBox(age: series.age(i)) { Text(values[i].isFinite ? format(values[i]) : "–") }
+            }
+        }
         .frame(height: 54)
     }
 }
 
+/// Two series on one chart. The names label the hover readout (the network popover has no colour
+/// legend, so the readout must say which line is which).
 struct DualChart: View {
-    let a: [Double], b: [Double]
+    let a: Series, b: Series
     let aName: String, bName: String
     var aColor: Color = .blue, bColor: Color = .orange
     var format: (Double) -> String
+    @StateObject private var hover = ChartHover()
 
     var body: some View {
-        let top = max(a.max() ?? 0, b.max() ?? 0, 0.0001) * 1.15
+        let top = max(a.values.max() ?? 0, b.values.max() ?? 0, 0.0001) * 1.15
+        let count = max(a.values.count, b.values.count)
+        let hovered = hover.shown(count: count)
         Chart {
-            ForEach(Array(a.enumerated()), id: \.offset) { p in
+            ForEach(Array(a.values.enumerated()), id: \.offset) { p in
                 LineMark(x: .value("t", p.offset), y: .value("v", p.element), series: .value("s", aName))
                     .foregroundStyle(aColor).lineStyle(StrokeStyle(lineWidth: 1.3))
             }
-            ForEach(Array(b.enumerated()), id: \.offset) { p in
+            ForEach(Array(b.values.enumerated()), id: \.offset) { p in
                 LineMark(x: .value("t", p.offset), y: .value("v", p.element), series: .value("s", bName))
                     .foregroundStyle(bColor).lineStyle(StrokeStyle(lineWidth: 1.3))
             }
+            if let i = hovered {
+                RuleMark(x: .value("t", i)).foregroundStyle(Color.primary.opacity(0.3)).lineStyle(StrokeStyle(lineWidth: 1))
+                if let v = a.values[safe: i], v.isFinite {
+                    PointMark(x: .value("t", i), y: .value("v", v)).foregroundStyle(aColor).symbolSize(22)
+                }
+                if let v = b.values[safe: i], v.isFinite {
+                    PointMark(x: .value("t", i), y: .value("v", v)).foregroundStyle(bColor).symbolSize(22)
+                }
+            }
         }
-        .chartXScale(domain: 0...max(Series.capacity - 1, a.count - 1))
+        .chartXScale(domain: 0...max(Series.capacity - 1, count - 1))
         .chartYScale(domain: 0...top)
         .chartXAxis(.hidden)
         .chartYAxis {
@@ -75,8 +212,30 @@ struct DualChart: View {
                 AxisValueLabel { if let d = v.as(Double.self) { Text(format(d)).font(.system(size: 8)) } }
             }
         }
+        .chartOverlay { proxy in
+            HoverLayer(proxy: proxy, count: count, hover: hover) { i in
+                ReadoutBox(age: (a.values.count >= b.values.count ? a : b).age(i)) {
+                    HStack(spacing: 8) {
+                        entry(aName, aColor, a.values[safe: i])
+                        entry(bName, bColor, b.values[safe: i])
+                    }
+                }
+            }
+        }
         .frame(height: 54)
     }
+
+    private func entry(_ name: String, _ color: Color, _ v: Double?) -> some View {
+        HStack(spacing: 3) {
+            Circle().fill(color).frame(width: 6, height: 6)
+            Text(name).foregroundStyle(.secondary)
+            Text(v.map { $0.isFinite ? format($0) : "–" } ?? "–")
+        }
+    }
+}
+
+extension Array {
+    subscript(safe i: Int) -> Element? { indices.contains(i) ? self[i] : nil }
 }
 
 /// Popover header: title, then each headline number in its own labelled column (usage and power
@@ -180,7 +339,7 @@ struct CPUView: View {
         let n = s.now
         VStack(alignment: .leading, spacing: 10) {
             StatHeader(title: "CPU", stats: [("占用率", Fmt.pct(n.cpuTotal)), ("功耗", Fmt.watts(n.cpuW))])
-            HistoryChart(values: s.history.cpu.values, maxValue: 1, format: { Fmt.pct($0) })
+            HistoryChart(series: s.history.cpu, maxValue: 1, format: { Fmt.pct($0) })
             HStack(spacing: 14) {
                 Row(label: "用户", value: Fmt.pct(n.cpuUser), color: .accentColor)
                 Row(label: "系统", value: Fmt.pct(n.cpuSystem), color: .red)
@@ -193,7 +352,7 @@ struct CPUView: View {
                 }
             }
             Section(title: "功耗", note: "IOReport") {
-                HistoryChart(values: s.history.cpuW.values, color: .orange, format: { Fmt.watts($0) })
+                HistoryChart(series: s.history.cpuW, color: .orange, format: { Fmt.watts($0) })
             }
             Section(title: "CPU 占用最高", note: "仅当前用户进程") {
                 ProcList(rows: s.procs.byCPU) { Fmt.pct($0) }
@@ -227,7 +386,7 @@ struct GPUView: View {
         let n = s.now
         VStack(alignment: .leading, spacing: 10) {
             StatHeader(title: "GPU", stats: [("占用率", Fmt.pct(n.gpuUtil)), ("功耗", Fmt.watts(n.gpuW))])
-            HistoryChart(values: s.history.gpu.values, color: .purple, maxValue: 1, format: { Fmt.pct($0) })
+            HistoryChart(series: s.history.gpu, color: .purple, maxValue: 1, format: { Fmt.pct($0) })
             VStack(spacing: 3) {
                 Row(label: "渲染器", value: Fmt.pct(n.gpuRenderer))
                 Row(label: "Tiler", value: Fmt.pct(n.gpuTiler))
@@ -235,7 +394,7 @@ struct GPUView: View {
                 Row(label: "占用统一内存", value: Fmt.bytes(n.gpuMem))
             }
             Section(title: "功耗", note: "IOReport") {
-                HistoryChart(values: s.history.gpuW.values, color: .orange, format: { Fmt.watts($0) })
+                HistoryChart(series: s.history.gpuW, color: .orange, format: { Fmt.watts($0) })
             }
         }
     }
@@ -250,7 +409,7 @@ struct MemoryView: View {
             StatHeader(title: "内存", stats: [("占用率", Fmt.pct(n.memFraction)),
                                               ("已用", "\(Fmt.bytes(n.memUsed)) / \(Fmt.bytes(n.memTotal))"),
                                               ("DRAM 功耗", Fmt.watts(n.dramW))])
-            HistoryChart(values: s.history.mem.values, color: .green, maxValue: 1, format: { Fmt.pct($0) })
+            HistoryChart(series: s.history.mem, color: .green, maxValue: 1, format: { Fmt.pct($0) })
             VStack(spacing: 3) {
                 Row(label: "内存压力", value: pressure.0, color: pressure.1)
                 Row(label: "App 内存", value: Fmt.bytes(n.memApp), color: .blue)
@@ -261,7 +420,7 @@ struct MemoryView: View {
             }
             Section(title: "DRAM 功耗", note: "IOReport") {
                 HStack { Spacer(); Text(Fmt.watts(n.dramW)).font(.system(size: 11.5).monospacedDigit()) }
-                HistoryChart(values: s.history.dramW.values, color: .orange, format: { Fmt.watts($0) })
+                HistoryChart(series: s.history.dramW, color: .orange, format: { Fmt.watts($0) })
             }
             Section(title: "内存占用最高", note: "仅当前用户进程") {
                 ProcList(rows: s.procs.byMemory) { Fmt.bytes(UInt64($0)) }
@@ -280,7 +439,7 @@ struct NetworkView: View {
                 Row(label: "接口", value: n.netIface.isEmpty ? "未连接" : n.netIface)
                 Row(label: "IP", value: n.netIP.isEmpty ? "–" : n.netIP)
             }
-            DualChart(a: s.history.rx.values, b: s.history.tx.values, aName: "rx", bName: "tx", format: { Fmt.rate($0) })
+            DualChart(a: s.history.rx, b: s.history.tx, aName: "↓", bName: "↑", format: { Fmt.rate($0) })
             Section(title: "本次启动以来") {
                 HStack(spacing: 14) {
                     Row(label: "↓", value: Fmt.dataSize(n.rxTotal))
@@ -342,7 +501,7 @@ struct SensorsView: View {
                 Row(label: "GPU（最高 / 平均）", value: "\(Fmt.temp(n.gpuTemp)) / \(Fmt.temp(n.gpuTempAvg))", color: .purple)
                 // The chart plots the CPU and GPU rows (blue/purple), so it sits right under them; SSD
                 // below it, or the chart read as the SSD's.
-                DualChart(a: s.history.cpuTemp.values, b: s.history.gpuTemp.values, aName: "cpu", bName: "gpu",
+                DualChart(a: s.history.cpuTemp, b: s.history.gpuTemp, aName: "CPU", bName: "GPU",
                           aColor: .blue, bColor: .purple, format: { String(format: "%.0f°", $0) })
                 if n.ssdTemp > 0 { Row(label: "SSD", value: Fmt.temp(n.ssdTemp)) }
             }
@@ -356,7 +515,7 @@ struct SensorsView: View {
                 Row(label: "神经网络引擎", value: Fmt.watts(n.aneW), color: .pink)
                 Row(label: "DRAM", value: Fmt.watts(n.dramW), color: .green)
                 Row(label: "其他（显示、总线、SSD、风扇…）", value: Fmt.watts(n.otherW))
-                HistoryChart(values: s.history.bodyW.values, color: .orange, format: { Fmt.watts($0) })
+                HistoryChart(series: s.history.bodyW, color: .orange, format: { Fmt.watts($0) })
             }
             Section(title: "风扇") {
                 ForEach(n.fans) { f in
