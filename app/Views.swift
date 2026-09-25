@@ -483,7 +483,13 @@ struct FilledSegments: NSViewRepresentable {
 /// Popover-local UI state. Plain ObservableObject: @State is a macro in the macOS 27 SDK and its
 /// plugin ships only with Xcode, so a Command Line Tools build cannot expand it.
 final class FanControlState: ObservableObject {
-    @Published var slider = 50.0
+    /// The slider's value while the user drags it. Otherwise the slider shows the fans' state.
+    @Published var slider = 0.0
+    @Published var dragging = false
+    var dragStart = 0.0
+    /// A setting just written that fanctld (polling once a second) has not echoed yet. Shown
+    /// meanwhile, so the presets and the slider do not snap back to the old setting for a tick.
+    @Published var pending: (setting: String, at: Date)?
     @Published var error: String?
 }
 
@@ -535,14 +541,20 @@ struct SensorsView: View {
             // Always exactly these five segments: a sixth "自定义" one made the control wider than the
             // popover and it overflowed the right edge. A slider value (not a preset) selects none;
             // the slider and its label show it instead.
-            FilledSegments(labels: presets.map(\.0), selected: presets.firstIndex(where: { $0.1 == d.setting })) {
+            let setting = shownSetting(d)
+            FilledSegments(labels: presets.map(\.0), selected: presets.firstIndex(where: { $0.1 == setting })) {
                 apply(presets[$0].1)
             }
+            let position = sliderPosition(setting)
             HStack {
-                Slider(value: $ui.slider, in: 0...100) { editing in if !editing { apply(String(format: "%.0f%%", ui.slider)) } }
-                Text(sliderLabel).font(.system(size: 10.5).monospacedDigit()).foregroundStyle(.secondary).frame(width: 92, alignment: .trailing)
+                Slider(value: Binding(get: { ui.dragging ? ui.slider : position },
+                                      set: { beginDrag(at: position); ui.slider = $0 }), in: 0...100) { editing in
+                    if editing { beginDrag(at: position) } else { endDrag() }
+                }
+                Text(sliderLabel(setting, position)).font(.system(size: 10.5).monospacedDigit()).foregroundStyle(.secondary)
+                    .frame(width: 92, alignment: .trailing)
             }
-            .onAppear { if d.setting.hasSuffix("%"), let v = Double(d.setting.dropLast()) { ui.slider = v } }
+            .onDisappear { ui.dragging = false }
             if let error = ui.error { Text(error).font(.system(size: 10.5)).foregroundStyle(.red) }
         } else {
             Text("调速需要后台服务 fanctld（装一次，之后无需密码）").font(.system(size: 11)).foregroundStyle(.secondary)
@@ -562,13 +574,50 @@ struct SensorsView: View {
         }
     }
 
-    private var sliderLabel: String {
+    private func shownSetting(_ d: FanDaemon.Status) -> String {
+        if let p = ui.pending, p.setting != d.setting, Date().timeIntervalSince(p.at) < 5 { return p.setting }
+        return d.setting
+    }
+
+    private var actualRPM: Double {
+        let fans = s.now.fans
+        return fans.isEmpty ? 0 : fans.map(\.actual).reduce(0, +) / Double(fans.count)
+    }
+
+    /// Where the slider rests (0…100 % of the fan's min…max range): the requested speed, or in auto
+    /// the speed the firmware is running the fans at right now.
+    private func sliderPosition(_ setting: String) -> Double {
+        guard let f = s.now.fans.first, f.max > f.min else { return 0 }
+        if setting.hasSuffix("%"), let v = Double(setting.dropLast()) { return min(max(v, 0), 100) }
+        let rpm = Double(setting) ?? actualRPM  // "<rpm>" from the CLI; auto (or invalid): actual
+        return min(max((rpm - f.min) / (f.max - f.min) * 100, 0), 100)
+    }
+
+    private func sliderLabel(_ setting: String, _ position: Double) -> String {
         guard let f = s.now.fans.first else { return "" }
-        return String(format: "%.0f%% ≈ %.0f rpm", ui.slider, f.min + (f.max - f.min) * ui.slider / 100)
+        if !ui.dragging, setting == "auto" { return String(format: "自动 · %.0f rpm", actualRPM) }
+        let pct = ui.dragging ? ui.slider : position
+        return String(format: "%.0f%% ≈ %.0f rpm", pct, f.min + (f.max - f.min) * pct / 100)
+    }
+
+    /// Called from both the value setter and onEditingChanged(true); AppKit sends them in either order.
+    private func beginDrag(at position: Double) {
+        guard !ui.dragging else { return }
+        ui.dragging = true
+        ui.dragStart = position
+        ui.slider = position
+    }
+
+    private func endDrag() {
+        guard ui.dragging else { return }
+        ui.dragging = false
+        // A click that leaves the knob where it was changes nothing (it must not turn auto into manual).
+        if abs(ui.slider - ui.dragStart) >= 0.5 { apply(String(format: "%.0f%%", ui.slider)) }
     }
 
     private func apply(_ setting: String) {
-        do { try FanDaemon.apply(setting); ui.error = nil } catch { ui.error = "写入失败：\(error.localizedDescription)" }
+        do { try FanDaemon.apply(setting); ui.pending = (setting, Date()); ui.error = nil }
+        catch { ui.pending = nil; ui.error = "写入失败：\(error.localizedDescription)" }
     }
 }
 
