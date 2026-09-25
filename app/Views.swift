@@ -576,8 +576,11 @@ struct SensorsView: View {
 
 struct PopoverView: View {
     let module: Module
-    @ObservedObject var s: Sampler
-    @ObservedObject var settings: Settings
+    // Not observed here: each module view observes the sampler itself. If this shell re-rendered on
+    // every sample, SwiftUI would re-apply the gear menu's 刷新间隔 picker item each time (measured:
+    // 4 NSMenu item changes per sample), which closes its submenu under the pointer.
+    let s: Sampler
+    let settings: Settings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -589,29 +592,38 @@ struct PopoverView: View {
             case .sensors: SensorsView(s: s, ui: s.fanUI)
             }
             Divider()
-            HStack {
-                Menu {
-                    ForEach(Module.allCases) { m in
-                        Toggle(m.title, isOn: Binding(get: { settings.enabled.contains(m) },
-                                                      set: { settings.setEnabled(m, $0) }))
-                    }
-                    Divider()
-                    Picker("刷新间隔", selection: $settings.interval) {
-                        Text("1 秒").tag(1.0); Text("2 秒").tag(2.0); Text("5 秒").tag(5.0)
-                    }
-                    if settings.loginNeedsApproval {
-                        Button("登录时启动：需在系统设置中允许…") { SMAppService.openSystemSettingsLoginItems() }
-                    } else {
-                        Toggle("登录时启动", isOn: Binding(get: { settings.launchAtLogin }, set: { settings.setLaunchAtLogin($0) }))
-                    }
-                } label: { Image(systemName: "gearshape") }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                Spacer()
-                Button("退出 StatMenu") { NSApp.terminate(nil) }.buttonStyle(.borderless).font(.system(size: 11))
-            }
+            PopoverFooter(settings: settings)
         }
         .padding(14)
         .frame(width: 320)
+    }
+}
+
+/// Gear menu + quit. Observes only the settings, so sampler updates never touch the open menu.
+struct PopoverFooter: View {
+    @ObservedObject var settings: Settings
+
+    var body: some View {
+        HStack {
+            Menu {
+                ForEach(Module.allCases) { m in
+                    Toggle(m.title, isOn: Binding(get: { settings.enabled.contains(m) },
+                                                  set: { settings.setEnabled(m, $0) }))
+                }
+                Divider()
+                Picker("刷新间隔", selection: $settings.interval) {
+                    Text("1 秒").tag(1.0); Text("2 秒").tag(2.0); Text("5 秒").tag(5.0)
+                }
+                if settings.loginNeedsApproval {
+                    Button("登录时启动：需在系统设置中允许…") { SMAppService.openSystemSettingsLoginItems() }
+                } else {
+                    Toggle("登录时启动", isOn: Binding(get: { settings.launchAtLogin }, set: { settings.setLaunchAtLogin($0) }))
+                }
+            } label: { Image(systemName: "gearshape") }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            Spacer()
+            Button("退出 StatMenu") { NSApp.terminate(nil) }.buttonStyle(.borderless).font(.system(size: 11))
+        }
     }
 }
 

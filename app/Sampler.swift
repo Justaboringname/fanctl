@@ -93,12 +93,21 @@ final class Sampler: ObservableObject {
 
     private var timer: Timer?
     private let clusterNames: [Character: String]
+    /// A menu of ours (the popover's gear menu) is open. Ticks are skipped meanwhile: the first SwiftUI
+    /// update while it tracks re-applies the 刷新间隔 picker item (measured: 4 NSMenu item changes),
+    /// which closes its submenu under the pointer. A Bool, not a count, so it can never get stuck.
+    private var menuOpen = false
 
     init(interval: TimeInterval) {
         self.interval = interval
         ok = m_open() == 0
         clusterNames = Sampler.clusterNames()
         restart()
+        for (name, open) in [(NSMenu.didBeginTrackingNotification, true), (NSMenu.didEndTrackingNotification, false)] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in  // posted on main, synchronously
+                MainActor.assumeIsolated { self?.menuOpen = open }
+            }
+        }
     }
 
     private func restart() {
@@ -106,7 +115,7 @@ final class Sampler: ObservableObject {
         let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.sample() }
         }
-        RunLoop.main.add(t, forMode: .common)  // keep ticking while menus/popovers track the mouse
+        RunLoop.main.add(t, forMode: .common)  // keep ticking while a slider drag tracks the mouse (menus: see menuOpen)
         timer = t
     }
 
@@ -131,7 +140,7 @@ final class Sampler: ObservableObject {
     /// Timer path: collect on the background queue, publish on the main actor. Skips a tick if the
     /// previous collection is still running.
     func sample() {
-        guard !inFlight else { return }
+        guard !inFlight, !menuOpen else { return }
         inFlight = true
         let mode = nextProcMode()
         queue.async {
