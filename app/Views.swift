@@ -416,7 +416,6 @@ struct MemoryView: View {
                 Row(label: "联动内存", value: Fmt.bytes(n.memWired), color: .orange)
                 Row(label: "被压缩", value: Fmt.bytes(n.memCompressed), color: .purple)
                 Row(label: "已缓存文件", value: Fmt.bytes(n.memCached))
-                Row(label: "交换", value: "\(Fmt.bytes(n.swapUsed)) / \(Fmt.bytes(n.swapTotal))")
             }
             Section(title: "DRAM 功耗", note: "IOReport") {
                 HStack { Spacer(); Text(Fmt.watts(n.dramW)).font(.system(size: 11.5).monospacedDigit()) }
