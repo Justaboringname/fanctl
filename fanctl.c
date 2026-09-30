@@ -21,6 +21,9 @@
 // reduce cooling); below GUARD_C - GUARD_HYST_C the requested speed resumes. With no readable
 // temperature sensor the fans go back to auto.
 //
+// GPU power is "GPU Energy" plus AFR0, the GPU's memory-path rail (see gpu_afr_w in metrics.h):
+// AFR follows GPU memory bandwidth only and reaches ~25 W under memory-heavy GPU loads.
+//
 // Power: CPU/GPU/ANE/DRAM watts come from metrics.c's IOReport Energy Model as energy delta
 // over the channel's own hardware timestamp delta. The counters update in batches (every
 // 1–2 s, depending on what drives them); dividing by the poll interval instead gives
@@ -276,6 +279,7 @@ static void print_power(void) {
             printf("%s%s ", i ? " | " : "", names[i]);
             if (ok && valid[i]) printf("%.2f W", watts[i]); else printf("N/A");
         }
+        if (ok && p.gpu_valid) printf("\nGPU includes %.2f W on AFR (GPU memory path)", p.gpu_afr_w);
         if (ok && p.cpu_valid)
             printf("\nCPU: %.2fs measurement window; updated %.1fs ago", p.cpu_interval_s, p.cpu_age_s);
         printf("\nSubtotal (CPU+GPU+ANE+DRAM): ");

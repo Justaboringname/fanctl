@@ -182,7 +182,7 @@ static int is_cluster_name(const char *name, const char *prefix) {
 static int other_energy_channel(const char *name) {
     // Observed on this machine: retain raw names instead of guessing rail meanings.
     // Do not include per-core, SRAM or DTL channels alongside their parent totals.
-    const char *prefixes[] = {"AFR", "ISP", "AVE", "AVD", "MSR", "AMCC", "DCS",
+    const char *prefixes[] = {"ISP", "AVE", "AVD", "MSR", "AMCC", "DCS",
                              "DISP", "DISPEXT", "FAB", "MCPM", "PCPM"};
     for (size_t i = 0; i < sizeof prefixes / sizeof *prefixes; i++)
         if (is_cluster_name(name, prefixes[i])) return 1;
@@ -193,7 +193,7 @@ static int other_energy_channel(const char *name) {
 static int wanted_energy_channel(const char *name) {
     return !strcmp(name, "CPU Energy") || !strcmp(name, "GPU Energy") || is_cluster_name(name, "DRAM") ||
            is_cluster_name(name, "PCPU") || is_cluster_name(name, "MCPU") || is_cluster_name(name, "ECPU") ||
-           is_cluster_name(name, "ANE") || other_energy_channel(name);
+           is_cluster_name(name, "ANE") || is_cluster_name(name, "AFR") || other_energy_channel(name);
 }
 
 // Copies a channel group keeping only the channels `keep` accepts, so each sample stays small.
@@ -251,7 +251,7 @@ int m_power_sample(m_power *out) {
     CFRelease(prev_sample);
     prev_sample = cur;
     CFArrayRef chans = CFDictionaryGetValue(cur, CFSTR("IOReportChannels"));
-    int ane_seen = 0, ane_bad = 0, dram_seen = 0, dram_bad = 0;
+    int ane_seen = 0, ane_bad = 0, dram_seen = 0, dram_bad = 0, afr_seen = 0, afr_bad = 0;
     for (CFIndex i = 0; chans && i < CFArrayGetCount(chans); i++) {
         CFDictionaryRef ch = CFArrayGetValueAtIndex(chans, i);
         char group[64], name[64];
@@ -273,6 +273,11 @@ int m_power_sample(m_power *out) {
             if (is_cluster_name(name, "DRAM")) {
                 dram_seen++;
                 if (valid) out->dram_w += w; else dram_bad++;
+                continue;
+            }
+            if (is_cluster_name(name, "AFR")) {  // counted as GPU; see gpu_afr_w in metrics.h
+                afr_seen++;
+                if (valid) out->gpu_afr_w += w; else afr_bad++;
                 continue;
             }
             if (is_cluster_name(name, "ANE")) {
@@ -311,6 +316,9 @@ int m_power_sample(m_power *out) {
     if (delta) CFRelease(delta);
     out->ane_valid = ane_seen > 0 && !ane_bad;
     out->dram_valid = dram_seen > 0 && !dram_bad;
+    // A GPU figure without its memory-path rail would silently read ~25 W low under heavy work.
+    if (afr_seen && afr_bad) out->gpu_valid = 0;
+    else out->gpu_w += out->gpu_afr_w;
     out->valid = out->cpu_valid && out->gpu_valid;
     return 0;
 }

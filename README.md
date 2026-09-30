@@ -63,6 +63,8 @@ fanctl dump [前缀]          # 列出 SMC 键（调试用），如 fanctl dump 
 
 ## 功耗是怎么测的（踩过的坑）
 
+**GPU 功耗 = `GPU Energy` + `AFR0`。** `AFR0` 是 GPU 到内存那段通路单独的一路供电：它有自己的 13 档调频（338–1620 MHz），档位只跟 GPU 的内存带宽走（电源协处理器里的 `agx-afr-bw` 策略，阈值单位 GB/s）。空闲和纯 CPU 负载时是 0，吃内存的 GPU 负载下能到 25 W 左右；不算它的话，GPU 功耗会比整机功耗的涨幅少一大截。
+
 **1. 按硬件时间戳算，不按轮询间隔。** CPU/GPU/DRAM/ANE 功耗来自 IOReport 的 “Energy Model” 能耗计数器（普通权限可读）。每个计数器自带更新时间戳，而且各自按自己的节奏批量更新（CPU/DRAM 约 1–2 秒一批，GPU 实时）。拿两次读数的差除以*轮询间隔*（macmon 的做法）会让 CPU 功耗在 0 和 2 倍之间来回跳；这里一律用计数器自己的时间戳差（`power_rate.h`，有单元测试）。间隔不到 0.25 秒的更新会并入下一个窗口，避免偶发的 10 ms 窄窗口造成尖峰。
 
 **2. M5 / macOS 27 上，CPU/DRAM/ANE 计数器要有 root 的 `powermetrics` 在跑才会动。** 这个是卸掉 iStat Menus 之后才发现的：之前 CPU 功耗一直正常，只是因为 iStat 的后台一直开着 `powermetrics`。实测：

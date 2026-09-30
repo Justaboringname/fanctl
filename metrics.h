@@ -29,7 +29,12 @@ typedef struct {
     int cpu_valid, gpu_valid, ane_valid, dram_valid;
     double cpu_w;               // "CPU Energy" (all clusters)
     double cpu_p_w, cpu_m_w, cpu_e_w;  // per cluster type (PCPU*, MCPU*, ECPU*)
-    double gpu_w, ane_w, dram_w;
+    double gpu_w, ane_w, dram_w;  // gpu_w = "GPU Energy" + gpu_afr_w
+    // AFR*: the GPU's memory-path rail. Its DVFS level follows GPU memory bandwidth (the PMP's
+    // agx-afr-bw policy, thresholds in GB/s; own 13-state table 338–1620 MHz in pmgr
+    // afr-perf-states). 0 W at idle and under CPU-only load, up to ~25 W under memory-heavy GPU
+    // work, and it closes most of the gap between "GPU Energy" and the rise in system power.
+    double gpu_afr_w;
     double cpu_interval_s, cpu_age_s; // last completed source window and age of its end
     double gpu_active;          // 0..1, share of time the GPU was not in its OFF power state
     // Additional Energy Model channels, kept separate because their overlap with
