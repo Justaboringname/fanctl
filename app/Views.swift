@@ -239,20 +239,25 @@ extension Array {
 }
 
 /// Popover header: title, then each headline number in its own labelled column (usage and power
-/// are never run together).
+/// are never run together). `columnWidth` fixes the columns' width, for a popover that lines
+/// other numbers up under them (otherwise each column moves whenever a value's width changes).
 struct StatHeader: View {
+    static let spacing: CGFloat = 16
+    static let valueFont = Font.system(size: 15, weight: .semibold).monospacedDigit()
     let title: String
     let stats: [(label: String, value: String)]
+    var columnWidth: CGFloat? = nil
     var body: some View {
         HStack(alignment: .bottom) {
             Text(title).font(.system(size: 13, weight: .semibold))
             Spacer()
-            HStack(alignment: .bottom, spacing: 16) {
+            HStack(alignment: .bottom, spacing: Self.spacing) {
                 ForEach(stats.indices, id: \.self) { i in
                     VStack(alignment: .trailing, spacing: 1) {
                         Text(stats[i].label).font(.system(size: 9.5)).foregroundStyle(.secondary)
-                        Text(stats[i].value).font(.system(size: 15, weight: .semibold).monospacedDigit())
+                        Text(stats[i].value).font(Self.valueFont)
                     }
+                    .frame(minWidth: columnWidth, alignment: .trailing)
                 }
             }
         }
@@ -431,17 +436,24 @@ struct MemoryView: View {
 
 struct NetworkView: View {
     @ObservedObject var s: Sampler
+    /// Width of the header's rate columns: the widest Fmt.rate below 1 GB/s (digits are monospaced).
+    /// Fixed, so the totals at the bottom stay right under the rates.
+    private static let column = ceil(("888.8 MB/s" as NSString).size(withAttributes:
+        [.font: NSFont.monospacedDigitSystemFont(ofSize: 15, weight: .semibold)]).width)
+
     var body: some View {
         let n = s.now
         VStack(alignment: .leading, spacing: 10) {
-            StatHeader(title: "网络", stats: [("↓ 下载", Fmt.rate(n.rx)), ("↑ 上传", Fmt.rate(n.tx))])
+            StatHeader(title: "网络", stats: [("↓ 下载", Fmt.rate(n.rx)), ("↑ 上传", Fmt.rate(n.tx))],
+                       columnWidth: Self.column)
             HStack(spacing: 14) {
                 Row(label: "接口", value: n.netIface.isEmpty ? "未连接" : n.netIface)
                 Row(label: "IP", value: n.netIP.isEmpty ? "–" : n.netIP)
             }
             DualChart(a: s.history.rx, b: s.history.tx, aName: "↓", bName: "↑", format: { Fmt.rate($0) })
             Section(title: "本次启动以来") {
-                HStack(spacing: 14) {
+                HStack(spacing: StatHeader.spacing) {
+                    Spacer(minLength: 0)
                     total("↓", n.rxTotal)
                     total("↑", n.txTotal)
                 }
@@ -449,16 +461,14 @@ struct NetworkView: View {
         }
     }
 
-    /// Arrow then total, left-aligned in its half of the row (so the ↑ starts under "IP"). Not a Row:
-    /// its Spacer put the ↓ total at the far end of its half, right beside the ↑, which then read as
-    /// that number's label.
+    /// Arrow beside its total, right-aligned in the same column as the header's rate.
     private func total(_ arrow: String, _ bytes: UInt64) -> some View {
         HStack(spacing: 4) {
             Text(arrow).foregroundStyle(.secondary)
             Text(Fmt.dataSize(bytes)).monospacedDigit()
         }
         .font(.system(size: 11.5))
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minWidth: Self.column, alignment: .trailing)
     }
 }
 
