@@ -442,11 +442,23 @@ struct NetworkView: View {
             DualChart(a: s.history.rx, b: s.history.tx, aName: "↓", bName: "↑", format: { Fmt.rate($0) })
             Section(title: "本次启动以来") {
                 HStack(spacing: 14) {
-                    Row(label: "↓", value: Fmt.dataSize(n.rxTotal))
-                    Row(label: "↑", value: Fmt.dataSize(n.txTotal))
+                    total("↓", n.rxTotal)
+                    total("↑", n.txTotal)
                 }
             }
         }
+    }
+
+    /// Arrow then total, left-aligned in its half of the row (so the ↑ starts under "IP"). Not a Row:
+    /// its Spacer put the ↓ total at the far end of its half, right beside the ↑, which then read as
+    /// that number's label.
+    private func total(_ arrow: String, _ bytes: UInt64) -> some View {
+        HStack(spacing: 4) {
+            Text(arrow).foregroundStyle(.secondary)
+            Text(Fmt.dataSize(bytes)).monospacedDigit()
+        }
+        .font(.system(size: 11.5))
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
