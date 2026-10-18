@@ -23,7 +23,7 @@ MainActor.assumeIsolated {
                                                   Seg(text: Fmt.watts(n.cpuW), key: "cpu.w")]),
         StatusImage.make(label: "GPU", segments: [Seg(text: Fmt.pct(n.gpuUtil), key: "gpu.pct"),
                                                   Seg(text: Fmt.watts(n.gpuW), key: "gpu.w")]),
-        StatusImage.make(label: "MEM", segments: [Seg(text: Fmt.pct(n.memFraction), key: "mem.pct"),
+        StatusImage.make(label: "MEM", segments: [Seg(text: Fmt.pct(n.memPressure), key: "mem.pct"),
                                                   Seg(text: Fmt.watts(n.dramW), key: "mem.w")]),
         StatusImage.make(label: nil, symbol: "thermometer.medium",
                          segments: [Seg(text: Fmt.temp(n.cpuTemp), key: "sns.cpu", label: "CPU"),

@@ -52,6 +52,7 @@ typedef struct {
     uint64_t total, used, app, wired, compressed, cached;  // bytes; used = app + wired + compressed
     uint64_t swap_total, swap_used;
     int pressure;                                           // 1 normal, 2 warning, 4 critical
+    int free_pct;  // kern.memorystatus_level, -1 if unreadable; Activity Monitor's pressure = 100 − this
 } m_mem;
 
 typedef struct {

@@ -411,12 +411,13 @@ struct MemoryView: View {
         let n = s.now
         let pressure: (String, Color) = n.pressure >= 4 ? ("严重", .red) : n.pressure >= 2 ? ("警告", .yellow) : ("正常", .green)
         VStack(alignment: .leading, spacing: 10) {
-            StatHeader(title: "内存", stats: [("占用率", Fmt.pct(n.memFraction)),
+            StatHeader(title: "内存", stats: [("压力", Fmt.pct(n.memPressure)),
                                               ("已用", "\(Fmt.bytes(n.memUsed)) / \(Fmt.bytes(n.memTotal))"),
                                               ("DRAM 功耗", Fmt.watts(n.dramW))])
-            HistoryChart(series: s.history.mem, color: .green, maxValue: 1, format: { Fmt.pct($0) })
+            // Activity Monitor's pressure graph: height = 100 − kern.memorystatus_level, colour = level.
+            HistoryChart(series: s.history.mem, color: pressure.1, maxValue: 1, format: { Fmt.pct($0) })
             VStack(spacing: 3) {
-                Row(label: "内存压力", value: pressure.0, color: pressure.1)
+                Row(label: "内存压力", value: "\(Fmt.pct(n.memPressure)) · \(pressure.0)", color: pressure.1)
                 Row(label: "App 内存", value: Fmt.bytes(n.memApp), color: .blue)
                 Row(label: "联动内存", value: Fmt.bytes(n.memWired), color: .orange)
                 Row(label: "被压缩", value: Fmt.bytes(n.memCompressed), color: .purple)

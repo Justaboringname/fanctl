@@ -68,7 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 image = StatusImage.make(label: "GPU", segments: [Seg(text: Fmt.pct(n.gpuUtil), key: "gpu.pct"),
                                                                   Seg(text: Fmt.watts(n.gpuW), key: "gpu.w")])
             case .memory:
-                image = StatusImage.make(label: "MEM", segments: [Seg(text: Fmt.pct(n.memFraction), key: "mem.pct"),
+                image = StatusImage.make(label: "MEM", segments: [Seg(text: Fmt.pct(n.memPressure), key: "mem.pct"),
                                                                   Seg(text: Fmt.watts(n.dramW), key: "mem.w")])
             case .sensors:
                 image = StatusImage.make(label: nil, symbol: n.fans.contains(where: \.manual) ? "fan.fill" : "thermometer.medium",
@@ -87,7 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         switch m {
         case .cpu: "CPU \(Fmt.pct(n.cpuTotal)) \(Fmt.watts(n.cpuW))"
         case .gpu: "GPU \(Fmt.pct(n.gpuUtil)) \(Fmt.watts(n.gpuW))"
-        case .memory: "内存 \(Fmt.pct(n.memFraction)) \(Fmt.watts(n.dramW))"
+        case .memory: "内存压力 \(Fmt.pct(n.memPressure)) \(Fmt.watts(n.dramW))"
         case .network: "上传 \(Fmt.rate(n.tx)) 下载 \(Fmt.rate(n.rx))"
         case .sensors: "CPU \(Fmt.temp(n.cpuTemp)) GPU \(Fmt.temp(n.gpuTemp)) Mac 本体 \(Fmt.watts(n.bodyW))"
         }

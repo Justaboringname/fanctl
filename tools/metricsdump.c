@@ -24,9 +24,10 @@ int main(int argc, char **argv) {
                p.cpu_w, p.cpu_p_w, p.cpu_m_w, p.cpu_e_w);
         printf("GPU dev %5.1f%% rend %5.1f%% tiler %5.1f%% active %5.1f%%  %6.2f W  mem %.2f GB  | ANE %.2f W DRAM %.2f W\n",
                g.device * 100, g.renderer * 100, g.tiler * 100, p.gpu_active * 100, p.gpu_w, g.mem_in_use / 1e9, p.ane_w, p.dram_w);
-        printf("MEM used %.2f GB (app %.2f wired %.2f compr %.2f) cached %.2f total %.1f  swap %.2f/%.2f GB  pressure %d\n",
+        printf("MEM used %.2f GB (app %.2f wired %.2f compr %.2f) cached %.2f total %.1f  swap %.2f/%.2f GB  pressure %d%% (level %d)\n",
                m.used / 1073741824.0, m.app / 1073741824.0, m.wired / 1073741824.0, m.compressed / 1073741824.0,
-               m.cached / 1073741824.0, m.total / 1073741824.0, m.swap_used / 1073741824.0, m.swap_total / 1073741824.0, m.pressure);
+               m.cached / 1073741824.0, m.total / 1073741824.0, m.swap_used / 1073741824.0, m.swap_total / 1073741824.0,
+               m.free_pct >= 0 ? 100 - m.free_pct : -1, m.pressure);
         printf("NET %s %s  rx %.1f KB/s tx %.1f KB/s  totals rx %.2f GB tx %.2f GB\n", net.iface, net.ipv4,
                net.rx_bps / 1024, net.tx_bps / 1024, net.rx_total / 1e9, net.tx_total / 1e9);
         printf("SNS CPU %.1f/%.1f GPU %.1f/%.1f SSD %.1f °C  SYS %.1f W  fans", s.cpu_max, s.cpu_avg, s.gpu_max, s.gpu_avg, s.ssd, s.sys_w);

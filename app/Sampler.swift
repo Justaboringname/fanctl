@@ -23,12 +23,11 @@ struct Snapshot {
     var gpuUtil = 0.0, gpuRenderer = 0.0, gpuTiler = 0.0, gpuActive = 0.0, gpuMem: UInt64 = 0
     var memTotal: UInt64 = 0, memUsed: UInt64 = 0, memApp: UInt64 = 0, memWired: UInt64 = 0
     var memCompressed: UInt64 = 0, memCached: UInt64 = 0, swapTotal: UInt64 = 0, swapUsed: UInt64 = 0
-    var pressure = 1
+    var pressure = 1, memPressure = Double.nan  // level 1/2/4; Activity Monitor's pressure graph, 0…1
     var netIface = "", netIP = "", rx = 0.0, tx = 0.0, rxTotal: UInt64 = 0, txTotal: UInt64 = 0
     var cpuTemp = 0.0, cpuTempAvg = 0.0, gpuTemp = 0.0, gpuTempAvg = 0.0, ssdTemp = 0.0
     var fans: [Fan] = []
 
-    var memFraction: Double { memTotal > 0 ? Double(memUsed) / Double(memTotal) : 0 }
     /// The Mac itself: PSTR minus what the USB ports hand out to lamps, keyboards, chargers… (PSTR
     /// includes that output). The 12 V→5 V conversion loss for it (~8 % at 14 W) stays in here.
     var bodyW: Double { sysW > 0 ? max(0, sysW - usbW) : .nan }
@@ -201,6 +200,7 @@ final class Sampler: ObservableObject {
         snap.memTotal = m.total; snap.memUsed = m.used; snap.memApp = m.app; snap.memWired = m.wired
         snap.memCompressed = m.compressed; snap.memCached = m.cached
         snap.swapTotal = m.swap_total; snap.swapUsed = m.swap_used; snap.pressure = Int(m.pressure)
+        snap.memPressure = m.free_pct >= 0 ? Double(100 - min(Int(m.free_pct), 100)) / 100 : .nan
         snap.netIface = tupleString(n.iface); snap.netIP = tupleString(n.ipv4)
         snap.rx = n.rx_bps; snap.tx = n.tx_bps; snap.rxTotal = n.rx_total; snap.txTotal = n.tx_total
         snap.cpuTemp = Double(s.cpu_max); snap.cpuTempAvg = Double(s.cpu_avg)
@@ -212,10 +212,11 @@ final class Sampler: ObservableObject {
         now = snap
 
         var h = history
-        h.cpu.add(snap.cpuTotal); h.gpu.add(snap.gpuUtil); h.mem.add(snap.memFraction); h.rx.add(snap.rx); h.tx.add(snap.tx)
+        h.cpu.add(snap.cpuTotal); h.gpu.add(snap.gpuUtil); h.rx.add(snap.rx); h.tx.add(snap.tx)
         if snap.cpuW.isFinite { h.cpuW.add(snap.cpuW) }
         if snap.gpuW.isFinite { h.gpuW.add(snap.gpuW) }
         if snap.dramW.isFinite { h.dramW.add(snap.dramW) }
+        if snap.memPressure.isFinite { h.mem.add(snap.memPressure) }
         h.cpuTemp.add(snap.cpuTemp); h.gpuTemp.add(snap.gpuTemp)
         if snap.bodyW.isFinite { h.bodyW.add(snap.bodyW) }
         history = h

@@ -380,6 +380,10 @@ int m_mem_sample(m_mem *out) {
     }
     len = sizeof(out->pressure);
     sysctlbyname("kern.memorystatus_vm_pressure_level", &out->pressure, &len, NULL, 0);
+    // The kernel's "memory free percentage" (what `memory_pressure` prints). Activity Monitor's
+    // pressure graph plots 100 − this (checked against its graph height, 2026-10-18).
+    len = sizeof(out->free_pct);
+    if (sysctlbyname("kern.memorystatus_level", &out->free_pct, &len, NULL, 0)) out->free_pct = -1;
     return 0;
 }
 

@@ -107,7 +107,7 @@ enum StatusImage {
 }
 
 enum Fmt {
-    static func pct(_ v: Double) -> String { String(format: "%.0f%%", v * 100) }
+    static func pct(_ v: Double) -> String { v.isFinite ? String(format: "%.0f%%", v * 100) : "–" }
 
     static func watts(_ v: Double) -> String {
         guard v.isFinite else { return "–" }
