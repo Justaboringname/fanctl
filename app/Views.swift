@@ -112,14 +112,14 @@ private struct BesideX: Layout {
     }
 }
 
-/// The hover label: the value line(s), then how long ago the sample was taken.
+/// The hover label: the value line(s), then when the sample was taken.
 private struct ReadoutBox<Values: View>: View {
-    let age: TimeInterval
+    let when: String
     @ViewBuilder let values: Values
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             values.font(.system(size: 11, weight: .semibold).monospacedDigit())
-            Text(Fmt.age(age)).font(.system(size: 9)).foregroundStyle(.secondary)
+            Text(when).font(.system(size: 9)).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 5).padding(.vertical, 3)
         .background(RoundedRectangle(cornerRadius: 4).fill(.background).shadow(color: .black.opacity(0.18), radius: 1.5, y: 0.5))
@@ -127,24 +127,64 @@ private struct ReadoutBox<Values: View>: View {
     }
 }
 
+/// A line's drawable points: the finite values, each tagged with its run of consecutive finite
+/// values. Each run is its own chart series, so a gap (Mac asleep, app not running) breaks the line
+/// instead of bridging it; a run of one point gets a dot, since a one-point line draws nothing.
+private struct Drawn { let i: Int, run: Int, lone: Bool }
+
+private func drawable(_ v: [Double]) -> [Drawn] {
+    var out: [Drawn] = [], run = 0
+    for (i, x) in v.enumerated() {
+        if x.isFinite {
+            let lone = !(v[safe: i - 1]?.isFinite ?? false) && !(v[safe: i + 1]?.isFinite ?? false)
+            out.append(Drawn(i: i, run: run, lone: lone))
+        } else if v[safe: i - 1]?.isFinite ?? false { run += 1 }
+    }
+    return out
+}
+
+/// Top of a chart's y axis: headroom above the highest value or peak.
+private func chartTop(_ lines: ChartLine...) -> Double {
+    let all = lines.flatMap { $0.values + ($0.peaks ?? []) }.filter(\.isFinite)
+    return max(all.max() ?? 0, 0.0001) * 1.15
+}
+
 struct HistoryChart: View {
-    let series: Series
+    let line: ChartLine
     var color: Color = .accentColor
     var maxValue: Double? = nil
+    /// Usage charts (0…1): tint the 70–90 % and 90–100 % bands, the menu bar's yellow / red zones.
+    var zones = false
     var format: (Double) -> String = { String(format: "%.0f", $0) }
     @StateObject private var hover = ChartHover()
 
     var body: some View {
-        let values = series.values
-        let top = maxValue ?? max(values.max() ?? 0, 0.0001) * 1.15
+        let values = line.values, peaks = line.peaks
+        let top = maxValue ?? chartTop(line)
         let hovered = hover.shown(count: values.count)
         Chart {
-            ForEach(Array(values.enumerated()), id: \.offset) { point in
-                AreaMark(x: .value("t", point.offset), y: .value("v", point.element))
+            if zones {
+                RectangleMark(yStart: .value("v", Level.warnUsage), yEnd: .value("v", Level.criticalUsage))
+                    .foregroundStyle(Level.warn.fill.opacity(0.10))
+                RectangleMark(yStart: .value("v", Level.criticalUsage), yEnd: .value("v", 1.0))
+                    .foregroundStyle(Level.critical.fill.opacity(0.10))
+            }
+            ForEach(drawable(values), id: \.i) { p in
+                if let peaks {
+                    // Long ranges: the line is each point's mean, the faint band above it reaches the
+                    // peak within that point's time span (a 24 h mean alone hides every spike).
+                    AreaMark(x: .value("t", p.i), yStart: .value("v", values[p.i]), yEnd: .value("v", peaks[p.i]),
+                             series: .value("s", "peak\(p.run)"))
+                        .foregroundStyle(color.opacity(0.13))
+                }
+                AreaMark(x: .value("t", p.i), y: .value("v", values[p.i]), series: .value("s", "area\(p.run)"), stacking: .unstacked)
                     .foregroundStyle(color.opacity(0.18))
-                LineMark(x: .value("t", point.offset), y: .value("v", point.element))
+                LineMark(x: .value("t", p.i), y: .value("v", values[p.i]), series: .value("s", "line\(p.run)"))
                     .foregroundStyle(color)
                     .lineStyle(StrokeStyle(lineWidth: 1.3))
+                if p.lone {
+                    PointMark(x: .value("t", p.i), y: .value("v", values[p.i])).foregroundStyle(color).symbolSize(8)
+                }
             }
             if let i = hovered {
                 RuleMark(x: .value("t", i)).foregroundStyle(Color.primary.opacity(0.3)).lineStyle(StrokeStyle(lineWidth: 1))
@@ -153,7 +193,7 @@ struct HistoryChart: View {
                 }
             }
         }
-        .chartXScale(domain: 0...max(Series.capacity - 1, values.count - 1))
+        .chartXScale(domain: 0...max(line.slots - 1, values.count - 1))
         .chartYScale(domain: 0...top)
         .chartXAxis(.hidden)
         .chartYAxis {
@@ -164,7 +204,18 @@ struct HistoryChart: View {
         }
         .chartOverlay { proxy in
             HoverLayer(proxy: proxy, count: values.count, hover: hover) { i in
-                ReadoutBox(age: series.age(i)) { Text(values[i].isFinite ? format(values[i]) : "–") }
+                ReadoutBox(when: line.when(i)) {
+                    if !values[i].isFinite {
+                        Text("无数据").foregroundStyle(.secondary)
+                    } else if let p = peaks?[i] {
+                        HStack(spacing: 6) {
+                            Text("平均 \(format(values[i]))")
+                            Text("峰值 \(format(p))").foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text(format(values[i]))
+                    }
+                }
             }
         }
         .frame(height: 54)
@@ -174,24 +225,36 @@ struct HistoryChart: View {
 /// Two series on one chart. The names label the hover readout (the network popover has no colour
 /// legend, so the readout must say which line is which).
 struct DualChart: View {
-    let a: Series, b: Series
+    let a: ChartLine, b: ChartLine
     let aName: String, bName: String
     var aColor: Color = .blue, bColor: Color = .orange
     var format: (Double) -> String
     @StateObject private var hover = ChartHover()
 
     var body: some View {
-        let top = max(a.values.max() ?? 0, b.values.max() ?? 0, 0.0001) * 1.15
+        let top = chartTop(a, b)
         let count = max(a.values.count, b.values.count)
         let hovered = hover.shown(count: count)
         Chart {
-            ForEach(Array(a.values.enumerated()), id: \.offset) { p in
-                LineMark(x: .value("t", p.offset), y: .value("v", p.element), series: .value("s", aName))
+            ForEach(drawable(a.values), id: \.i) { p in
+                if let peaks = a.peaks {
+                    AreaMark(x: .value("t", p.i), yStart: .value("v", a.values[p.i]), yEnd: .value("v", peaks[p.i]),
+                             series: .value("s", "\(aName)peak\(p.run)"))
+                        .foregroundStyle(aColor.opacity(0.12))
+                }
+                LineMark(x: .value("t", p.i), y: .value("v", a.values[p.i]), series: .value("s", "\(aName)\(p.run)"))
                     .foregroundStyle(aColor).lineStyle(StrokeStyle(lineWidth: 1.3))
+                if p.lone { PointMark(x: .value("t", p.i), y: .value("v", a.values[p.i])).foregroundStyle(aColor).symbolSize(8) }
             }
-            ForEach(Array(b.values.enumerated()), id: \.offset) { p in
-                LineMark(x: .value("t", p.offset), y: .value("v", p.element), series: .value("s", bName))
+            ForEach(drawable(b.values), id: \.i) { p in
+                if let peaks = b.peaks {
+                    AreaMark(x: .value("t", p.i), yStart: .value("v", b.values[p.i]), yEnd: .value("v", peaks[p.i]),
+                             series: .value("s", "\(bName)peak\(p.run)"))
+                        .foregroundStyle(bColor.opacity(0.12))
+                }
+                LineMark(x: .value("t", p.i), y: .value("v", b.values[p.i]), series: .value("s", "\(bName)\(p.run)"))
                     .foregroundStyle(bColor).lineStyle(StrokeStyle(lineWidth: 1.3))
+                if p.lone { PointMark(x: .value("t", p.i), y: .value("v", b.values[p.i])).foregroundStyle(bColor).symbolSize(8) }
             }
             if let i = hovered {
                 RuleMark(x: .value("t", i)).foregroundStyle(Color.primary.opacity(0.3)).lineStyle(StrokeStyle(lineWidth: 1))
@@ -203,7 +266,7 @@ struct DualChart: View {
                 }
             }
         }
-        .chartXScale(domain: 0...max(Series.capacity - 1, count - 1))
+        .chartXScale(domain: 0...max(a.slots - 1, count - 1))
         .chartYScale(domain: 0...top)
         .chartXAxis(.hidden)
         .chartYAxis {
@@ -214,10 +277,26 @@ struct DualChart: View {
         }
         .chartOverlay { proxy in
             HoverLayer(proxy: proxy, count: count, hover: hover) { i in
-                ReadoutBox(age: (a.values.count >= b.values.count ? a : b).age(i)) {
-                    HStack(spacing: 8) {
-                        entry(aName, aColor, a.values[safe: i])
-                        entry(bName, bColor, b.values[safe: i])
+                ReadoutBox(when: (a.values.count >= b.values.count ? a : b).when(i)) {
+                    if a.peaks != nil || b.peaks != nil {
+                        Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 1) {
+                            GridRow {
+                                Text("平均")
+                                entry(aName, aColor, a.values[safe: i])
+                                entry(bName, bColor, b.values[safe: i])
+                            }
+                            GridRow {
+                                Text("峰值")
+                                entry(aName, nil, a.peaks?[safe: i])
+                                entry(bName, nil, b.peaks?[safe: i])
+                            }
+                            .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        HStack(spacing: 8) {
+                            entry(aName, aColor, a.values[safe: i])
+                            entry(bName, bColor, b.values[safe: i])
+                        }
                     }
                 }
             }
@@ -225,9 +304,11 @@ struct DualChart: View {
         .frame(height: 54)
     }
 
-    private func entry(_ name: String, _ color: Color, _ v: Double?) -> some View {
+    /// One series' value in the readout. The dot (its line colour) is drawn once, on the first row;
+    /// the 峰值 row passes nil and gets a same-width blank in its place.
+    private func entry(_ name: String, _ color: Color?, _ v: Double?) -> some View {
         HStack(spacing: 3) {
-            Circle().fill(color).frame(width: 6, height: 6)
+            Circle().fill(color ?? .clear).frame(width: 6, height: 6)
             Text(name).foregroundStyle(.secondary)
             Text(v.map { $0.isFinite ? format($0) : "–" } ?? "–")
         }
@@ -238,6 +319,22 @@ extension Array {
     subscript(safe i: Int) -> Element? { indices.contains(i) ? self[i] : nil }
 }
 
+extension Level {
+    /// The alert box colour, matching the menu bar's (system yellow / red).
+    var fill: Color { self == .critical ? .red : .yellow }
+    /// Text on that box: black reads on yellow, white on red.
+    var ink: Color { self == .critical ? .white : .black }
+    /// Core bars and similar fills: the accent colour until the level rises.
+    var bar: Color { self == .normal ? .accentColor : fill }
+}
+
+/// One headline number: a label above its value, which sits in a yellow / red box when alerting.
+struct Stat {
+    let label: String, value: String
+    var level: Level
+    init(_ label: String, _ value: String, _ level: Level = .normal) { self.label = label; self.value = value; self.level = level }
+}
+
 /// Popover header: title, then each headline number in its own labelled column (usage and power
 /// are never run together). `columnWidth` fixes the columns' width, for a popover that lines
 /// other numbers up under them (otherwise each column moves whenever a value's width changes).
@@ -245,7 +342,7 @@ struct StatHeader: View {
     static let spacing: CGFloat = 16
     static let valueFont = Font.system(size: 15, weight: .semibold).monospacedDigit()
     let title: String
-    let stats: [(label: String, value: String)]
+    let stats: [Stat]
     var columnWidth: CGFloat? = nil
     var body: some View {
         HStack(alignment: .bottom) {
@@ -255,12 +352,27 @@ struct StatHeader: View {
                 ForEach(stats.indices, id: \.self) { i in
                     VStack(alignment: .trailing, spacing: 1) {
                         Text(stats[i].label).font(.system(size: 9.5)).foregroundStyle(.secondary)
-                        Text(stats[i].value).font(Self.valueFont)
+                        AlertValue(text: stats[i].value, level: stats[i].level).font(Self.valueFont)
                     }
                     .frame(minWidth: columnWidth, alignment: .trailing)
                 }
             }
         }
+    }
+}
+
+/// A value in its alert box. The box is a background reaching past the text (negative padding), so
+/// switching it on or off never moves the text or resizes the popover.
+struct AlertValue: View {
+    let text: String, level: Level
+    var body: some View {
+        Text(text)
+            .foregroundStyle(level == .normal ? Color.primary : level.ink)
+            .background {
+                if level != .normal {
+                    RoundedRectangle(cornerRadius: 5).fill(level.fill).padding(.horizontal, -4).padding(.vertical, -1)
+                }
+            }
     }
 }
 
@@ -324,7 +436,7 @@ struct CoreBars: View {
                         ForEach(cores.filter { $0.cluster == cl.id }) { c in
                             ZStack(alignment: .bottom) {
                                 RoundedRectangle(cornerRadius: 1.5).fill(.quaternary)
-                                RoundedRectangle(cornerRadius: 1.5).fill(Color.accentColor)
+                                RoundedRectangle(cornerRadius: 1.5).fill(Level.usage(c.busy).bar)
                                     .frame(height: max(1, 26 * c.busy))
                             }
                             .frame(width: 9, height: 26)
@@ -340,11 +452,12 @@ struct CoreBars: View {
 
 struct CPUView: View {
     @ObservedObject var s: Sampler
+    @ObservedObject var settings: Settings
     var body: some View {
-        let n = s.now
+        let n = s.now, r = settings.range
         VStack(alignment: .leading, spacing: 10) {
-            StatHeader(title: "CPU", stats: [("占用率", Fmt.pct(n.cpuTotal)), ("功耗", Fmt.watts(n.cpuW))])
-            HistoryChart(series: s.history.cpu, maxValue: 1, format: { Fmt.pct($0) })
+            StatHeader(title: "CPU", stats: [Stat("占用率", Fmt.pct(n.cpuTotal), n.cpuLevel), Stat("功耗", Fmt.watts(n.cpuW))])
+            HistoryChart(line: s.line(.cpu, r), maxValue: 1, zones: true, format: { Fmt.pct($0) })
             HStack(spacing: 14) {
                 Row(label: "用户", value: Fmt.pct(n.cpuUser), color: .accentColor)
                 Row(label: "系统", value: Fmt.pct(n.cpuSystem), color: .red)
@@ -357,7 +470,7 @@ struct CPUView: View {
                 }
             }
             Section(title: "功耗", note: "IOReport") {
-                HistoryChart(series: s.history.cpuW, color: .orange, format: { Fmt.watts($0) })
+                HistoryChart(line: s.line(.cpuW, r), color: .orange, format: { Fmt.watts($0) })
             }
             Section(title: "CPU 占用最高", note: "仅当前用户进程") {
                 ProcList(rows: s.procs.byCPU) { Fmt.pct($0) }
@@ -387,11 +500,12 @@ struct LoadRow: View {
 
 struct GPUView: View {
     @ObservedObject var s: Sampler
+    @ObservedObject var settings: Settings
     var body: some View {
-        let n = s.now
+        let n = s.now, r = settings.range
         VStack(alignment: .leading, spacing: 10) {
-            StatHeader(title: "GPU", stats: [("占用率", Fmt.pct(n.gpuUtil)), ("功耗", Fmt.watts(n.gpuW))])
-            HistoryChart(series: s.history.gpu, color: .purple, maxValue: 1, format: { Fmt.pct($0) })
+            StatHeader(title: "GPU", stats: [Stat("占用率", Fmt.pct(n.gpuUtil), n.gpuLevel), Stat("功耗", Fmt.watts(n.gpuW))])
+            HistoryChart(line: s.line(.gpu, r), color: .purple, maxValue: 1, zones: true, format: { Fmt.pct($0) })
             VStack(spacing: 3) {
                 Row(label: "渲染器", value: Fmt.pct(n.gpuRenderer))
                 Row(label: "Tiler", value: Fmt.pct(n.gpuTiler))
@@ -399,7 +513,7 @@ struct GPUView: View {
                 Row(label: "占用统一内存", value: Fmt.bytes(n.gpuMem))
             }
             Section(title: "功耗", note: "IOReport") {
-                HistoryChart(series: s.history.gpuW, color: .orange, format: { Fmt.watts($0) })
+                HistoryChart(line: s.line(.gpuW, r), color: .orange, format: { Fmt.watts($0) })
             }
         }
     }
@@ -407,15 +521,16 @@ struct GPUView: View {
 
 struct MemoryView: View {
     @ObservedObject var s: Sampler
+    @ObservedObject var settings: Settings
     var body: some View {
-        let n = s.now
-        let pressure: (String, Color) = n.pressure >= 4 ? ("严重", .red) : n.pressure >= 2 ? ("警告", .yellow) : ("正常", .green)
+        let n = s.now, r = settings.range
+        let pressure: (String, Color) = n.memLevel == .critical ? ("严重", .red) : n.memLevel == .warn ? ("警告", .yellow) : ("正常", .green)
         VStack(alignment: .leading, spacing: 10) {
-            StatHeader(title: "内存", stats: [("压力", Fmt.pct(n.memPressure)),
-                                              ("已用", "\(Fmt.bytes(n.memUsed)) / \(Fmt.bytes(n.memTotal))"),
-                                              ("DRAM 功耗", Fmt.watts(n.dramW))])
+            StatHeader(title: "内存", stats: [Stat("压力", Fmt.pct(n.memPressure), n.memLevel),
+                                              Stat("已用", "\(Fmt.bytes(n.memUsed)) / \(Fmt.bytes(n.memTotal))"),
+                                              Stat("DRAM 功耗", Fmt.watts(n.dramW))])
             // Activity Monitor's pressure graph: height = 100 − kern.memorystatus_level, colour = level.
-            HistoryChart(series: s.history.mem, color: pressure.1, maxValue: 1, format: { Fmt.pct($0) })
+            HistoryChart(line: s.line(.mem, r), color: pressure.1, maxValue: 1, format: { Fmt.pct($0) })
             VStack(spacing: 3) {
                 Row(label: "内存压力", value: "\(Fmt.pct(n.memPressure)) · \(pressure.0)", color: pressure.1)
                 Row(label: "App 内存", value: Fmt.bytes(n.memApp), color: .blue)
@@ -426,7 +541,7 @@ struct MemoryView: View {
             }
             Section(title: "DRAM 功耗", note: "IOReport") {
                 HStack { Spacer(); Text(Fmt.watts(n.dramW)).font(.system(size: 11.5).monospacedDigit()) }
-                HistoryChart(series: s.history.dramW, color: .orange, format: { Fmt.watts($0) })
+                HistoryChart(line: s.line(.dramW, r), color: .orange, format: { Fmt.watts($0) })
             }
             Section(title: "内存占用最高", note: "仅当前用户进程") {
                 ProcList(rows: s.procs.byMemory) { Fmt.bytes(UInt64($0)) }
@@ -437,6 +552,7 @@ struct MemoryView: View {
 
 struct NetworkView: View {
     @ObservedObject var s: Sampler
+    @ObservedObject var settings: Settings
     /// Width of the header's rate columns: the widest Fmt.rate below 1 GB/s (digits are monospaced).
     /// Fixed, so the totals at the bottom stay right under the rates.
     private static let column = ceil(("888.8 MB/s" as NSString).size(withAttributes:
@@ -445,13 +561,13 @@ struct NetworkView: View {
     var body: some View {
         let n = s.now
         VStack(alignment: .leading, spacing: 10) {
-            StatHeader(title: "网络", stats: [("↓ 下载", Fmt.rate(n.rx)), ("↑ 上传", Fmt.rate(n.tx))],
+            StatHeader(title: "网络", stats: [Stat("↓ 下载", Fmt.rate(n.rx)), Stat("↑ 上传", Fmt.rate(n.tx))],
                        columnWidth: Self.column)
             HStack(spacing: 14) {
                 Row(label: "接口", value: n.netIface.isEmpty ? "未连接" : n.netIface)
                 Row(label: "IP", value: n.netIP.isEmpty ? "–" : n.netIP)
             }
-            DualChart(a: s.history.rx, b: s.history.tx, aName: "↓", bName: "↑", format: { Fmt.rate($0) })
+            DualChart(a: s.line(.rx, settings.range), b: s.line(.tx, settings.range), aName: "↓", bName: "↑", format: { Fmt.rate($0) })
             Section(title: "本次启动以来") {
                 HStack(spacing: StatHeader.spacing) {
                     Spacer(minLength: 0)
@@ -478,11 +594,14 @@ struct NetworkView: View {
 struct FilledSegments: NSViewRepresentable {
     let labels: [String]
     let selected: Int?  // nil: no segment highlighted
+    var size: NSControl.ControlSize = .regular
     let onSelect: (Int) -> Void
 
     func makeNSView(context: Context) -> NSSegmentedControl {
         let c = NSSegmentedControl(labels: labels, trackingMode: .selectOne,
                                    target: context.coordinator, action: #selector(Coordinator.changed(_:)))
+        c.controlSize = size
+        c.font = .systemFont(ofSize: NSFont.systemFontSize(for: size))
         c.segmentDistribution = .fillEqually
         c.setContentHuggingPriority(.defaultLow, for: .horizontal)
         c.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -519,18 +638,19 @@ final class FanControlState: ObservableObject {
 struct SensorsView: View {
     @ObservedObject var s: Sampler
     @ObservedObject var ui: FanControlState
+    @ObservedObject var settings: Settings
 
     var body: some View {
-        let n = s.now
+        let n = s.now, r = settings.range
         VStack(alignment: .leading, spacing: 10) {
-            StatHeader(title: "传感器", stats: [("CPU", Fmt.temp(n.cpuTemp)), ("GPU", Fmt.temp(n.gpuTemp)),
-                                               ("Mac 本体", Fmt.watts(n.bodyW))])
+            StatHeader(title: "传感器", stats: [Stat("CPU", Fmt.temp(n.cpuTemp), n.cpuTempLevel), Stat("GPU", Fmt.temp(n.gpuTemp), n.gpuTempLevel),
+                                               Stat("Mac 本体", Fmt.watts(n.bodyW))])
             Section(title: "温度") {
                 Row(label: "CPU（最高 / 平均）", value: "\(Fmt.temp(n.cpuTemp)) / \(Fmt.temp(n.cpuTempAvg))", color: .blue)
                 Row(label: "GPU（最高 / 平均）", value: "\(Fmt.temp(n.gpuTemp)) / \(Fmt.temp(n.gpuTempAvg))", color: .purple)
                 // The chart plots the CPU and GPU rows (blue/purple), so it sits right under them; SSD
                 // below it, or the chart read as the SSD's.
-                DualChart(a: s.history.cpuTemp, b: s.history.gpuTemp, aName: "CPU", bName: "GPU",
+                DualChart(a: s.line(.cpuTemp, r), b: s.line(.gpuTemp, r), aName: "CPU", bName: "GPU",
                           aColor: .blue, bColor: .purple, format: { String(format: "%.0f°", $0) })
                 if n.ssdTemp > 0 { Row(label: "SSD", value: Fmt.temp(n.ssdTemp)) }
             }
@@ -544,7 +664,7 @@ struct SensorsView: View {
                 Row(label: "神经网络引擎", value: Fmt.watts(n.aneW), color: .pink)
                 Row(label: "DRAM", value: Fmt.watts(n.dramW), color: .green)
                 Row(label: "其他（显示、总线、SSD、风扇…）", value: Fmt.watts(n.otherW))
-                HistoryChart(series: s.history.bodyW, color: .orange, format: { Fmt.watts($0) })
+                HistoryChart(line: s.line(.bodyW, r), color: .orange, format: { Fmt.watts($0) })
             }
             Section(title: "风扇") {
                 ForEach(n.fans) { f in
@@ -657,17 +777,27 @@ struct PopoverView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             switch module {
-            case .cpu: CPUView(s: s)
-            case .gpu: GPUView(s: s)
-            case .memory: MemoryView(s: s)
-            case .network: NetworkView(s: s)
-            case .sensors: SensorsView(s: s, ui: s.fanUI)
+            case .cpu: CPUView(s: s, settings: settings)
+            case .gpu: GPUView(s: s, settings: settings)
+            case .memory: MemoryView(s: s, settings: settings)
+            case .network: NetworkView(s: s, settings: settings)
+            case .sensors: SensorsView(s: s, ui: s.fanUI, settings: settings)
             }
+            RangePicker(settings: settings)
             Divider()
             PopoverFooter(settings: settings)
         }
         .padding(14)
         .frame(width: 320)
+    }
+}
+
+/// How far back every chart reaches; one setting shared by all popovers.
+struct RangePicker: View {
+    @ObservedObject var settings: Settings
+    var body: some View {
+        FilledSegments(labels: HistoryRange.allCases.map(\.label), selected: HistoryRange.allCases.firstIndex(of: settings.range),
+                       size: .small) { settings.range = HistoryRange.allCases[$0] }
     }
 }
 
@@ -703,6 +833,7 @@ struct PopoverFooter: View {
 final class Settings: ObservableObject {
     @Published private(set) var enabled: Set<Module>
     @Published var interval: Double { didSet { UserDefaults.standard.set(interval, forKey: "interval") } }
+    @Published var range: HistoryRange { didSet { UserDefaults.standard.set(range.rawValue, forKey: "historyRange") } }
     @Published private(set) var launchAtLogin = SMAppService.mainApp.status == .enabled
     /// The user turned StatMenu off under System Settings › Login Items; register() cannot override that.
     @Published private(set) var loginNeedsApproval = SMAppService.mainApp.status == .requiresApproval
@@ -713,6 +844,7 @@ final class Settings: ObservableObject {
         enabled = Set((saved ?? Module.allCases.map(\.rawValue)).compactMap(Module.init))
         let iv = UserDefaults.standard.double(forKey: "interval")
         interval = iv > 0 ? iv : 2
+        range = UserDefaults.standard.string(forKey: "historyRange").flatMap(HistoryRange.init) ?? .hour12
     }
 
     func setEnabled(_ m: Module, _ on: Bool) {

@@ -7,7 +7,31 @@ MainActor.assumeIsolated {
     _ = NSApplication.shared
     let out = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? "build/render")
     try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
-    let sampler = Sampler(interval: 3600)  // timer effectively off; sample manually below
+    // RENDER_RANGE=live|hour1|hour6|hour12|hour24 picks the charts' range (default live). Long ranges
+    // plot a synthetic 24 h timeline with a 3-hour sleep gap, or with RENDER_HISTORY=<file> the
+    // app's saved history (read only: the harness never saves).
+    let env = ProcessInfo.processInfo.environment
+    let range = env["RENDER_RANGE"].flatMap(HistoryRange.init) ?? .live
+    let historyFile = env["RENDER_HISTORY"].map { URL(fileURLWithPath: $0) }
+    let sampler = Sampler(interval: 3600, historyFile: historyFile)  // timer effectively off; sample manually below
+    // RENDER_LEVEL=warn|critical shows every alert (menu bar boxes, header boxes) at that level.
+    Sampler.previewLevel = ["warn": Level.warn, "critical": .critical][env["RENDER_LEVEL"] ?? ""]
+    if range != .live, historyFile == nil {
+        let now = Date().timeIntervalSince1970
+        func wave(_ t: Double, _ period: Double) -> Double { (sin(t / period * 2 * .pi) + 1) / 2 }
+        for t in stride(from: now - 86_400, to: now, by: 10) where !(now - 10 * 3600 ..< now - 7 * 3600).contains(t) {
+            var rng = SplitMix(seed: UInt64(t))
+            let burst = rng.next() < 0.002 ? 1.0 : 0  // a short spike now and then, for the peak band
+            let cpu = min(1, 0.06 + 0.3 * wave(t, 5 * 3600) + 0.06 * rng.next() + 0.8 * burst)
+            let gpu = min(1, 0.03 + 0.4 * wave(t + 4000, 3 * 3600) * wave(t, 40 * 60) + 0.5 * burst)
+            let values: [Metric: Double] = [
+                .cpu: cpu, .cpuW: 4 + 70 * cpu, .gpu: gpu, .gpuW: 1 + 90 * gpu, .mem: 0.35 + 0.2 * wave(t, 8 * 3600),
+                .dramW: 0.6 + 2 * cpu, .rx: 2e4 + 3e6 * pow(wave(t, 2 * 3600), 6) + 4e7 * burst, .tx: 5e3 + 4e5 * wave(t, 3600),
+                .cpuTemp: 42 + 45 * cpu, .gpuTemp: 38 + 40 * gpu, .bodyW: 12 + 70 * cpu + 90 * gpu,
+            ]
+            sampler.long.add(Metric.allCases.map { values[$0]! }, at: t)
+        }
+    }
     sampler.procViewers = 1
     for _ in 0..<6 {  // hardware energy counters update in 1–2 s batches; give them two updates
         RunLoop.main.run(until: Date().addingTimeInterval(1))
@@ -16,28 +40,33 @@ MainActor.assumeIsolated {
     // Menu bar strip (same drawing code as the real status items), light and dark.
     let n = sampler.now
     typealias Seg = StatusImage.Segment
-    let strip: [NSImage] = [NSImage]() + [
-        StatusImage.make(label: "NET", segments: [Seg(text: "↑\u{2009}" + Fmt.rate(n.tx), key: "net.tx"),
-                                                  Seg(text: "↓\u{2009}" + Fmt.rate(n.rx), key: "net.rx")]),
-        StatusImage.make(label: "CPU", segments: [Seg(text: Fmt.pct(n.cpuTotal), key: "cpu.pct"),
-                                                  Seg(text: Fmt.watts(n.cpuW), key: "cpu.w")]),
-        StatusImage.make(label: "GPU", segments: [Seg(text: Fmt.pct(n.gpuUtil), key: "gpu.pct"),
-                                                  Seg(text: Fmt.watts(n.gpuW), key: "gpu.w")]),
-        StatusImage.make(label: "MEM", segments: [Seg(text: Fmt.pct(n.memPressure), key: "mem.pct"),
-                                                  Seg(text: Fmt.watts(n.dramW), key: "mem.w")]),
-        StatusImage.make(label: nil, symbol: "thermometer.medium",
-                         segments: [Seg(text: Fmt.temp(n.cpuTemp), key: "sns.cpu", label: "CPU"),
-                                    Seg(text: Fmt.temp(n.gpuTemp), key: "sns.gpu", label: "GPU"),
-                                    Seg(text: Fmt.watts(n.bodyW), key: "sns.w")]),
-    ].map(\.image)
-    for (name, bg, fg) in [("light", NSColor(white: 0.93, alpha: 1), NSColor.black), ("dark", NSColor(white: 0.12, alpha: 1), NSColor.white)] {
-        let spacing: CGFloat = 12, width = strip.reduce(0) { $0 + $1.size.width + spacing } + spacing
+    @MainActor func strip(_ look: NSAppearance?) -> [NSImage] {
+        [
+            StatusImage.make(label: "NET", segments: [Seg(text: "↑\u{2009}" + Fmt.rate(n.tx), key: "net.tx"),
+                                                      Seg(text: "↓\u{2009}" + Fmt.rate(n.rx), key: "net.rx")]),
+            StatusImage.make(label: "CPU", segments: [Seg(text: Fmt.pct(n.cpuTotal), key: "cpu.pct", level: n.cpuLevel),
+                                                      Seg(text: Fmt.watts(n.cpuW), key: "cpu.w")], appearance: look),
+            StatusImage.make(label: "GPU", segments: [Seg(text: Fmt.pct(n.gpuUtil), key: "gpu.pct", level: n.gpuLevel),
+                                                      Seg(text: Fmt.watts(n.gpuW), key: "gpu.w")], appearance: look),
+            StatusImage.make(label: "MEM", segments: [Seg(text: Fmt.pct(n.memPressure), key: "mem.pct", level: n.memLevel),
+                                                      Seg(text: Fmt.watts(n.dramW), key: "mem.w")], appearance: look),
+            StatusImage.make(label: nil, symbol: "thermometer.medium",
+                             segments: [Seg(text: Fmt.temp(n.cpuTemp), key: "sns.cpu", label: "CPU", level: n.cpuTempLevel),
+                                        Seg(text: Fmt.temp(n.gpuTemp), key: "sns.gpu", label: "GPU", level: n.gpuTempLevel),
+                                        Seg(text: Fmt.watts(n.bodyW), key: "sns.w")], appearance: look),
+        ].map(\.image)
+    }
+    for (name, bg, fg, look) in [("light", NSColor(white: 0.93, alpha: 1), NSColor.black, NSAppearance.Name.aqua),
+                                 ("dark", NSColor(white: 0.12, alpha: 1), NSColor.white, .darkAqua)] {
+        let icons = strip(NSAppearance(named: look))
+        let spacing: CGFloat = 12, width = icons.reduce(0) { $0 + $1.size.width + spacing } + spacing
         let img = NSImage(size: NSSize(width: width, height: 26), flipped: false) { rect in
             bg.setFill(); rect.fill()
             var x = spacing
-            for icon in strip {
-                // Template images are tinted by the menu bar; emulate by masking with the foreground colour.
-                let tinted = NSImage(size: icon.size, flipped: false) { r in
+            for icon in icons {
+                // Template images are tinted by the menu bar; emulate by masking with the foreground
+                // colour. Alerting items are already coloured for this appearance.
+                let tinted = !icon.isTemplate ? icon : NSImage(size: icon.size, flipped: false) { r in
                     icon.draw(in: r); fg.set(); r.fill(using: .sourceAtop); return true
                 }
                 tinted.draw(at: NSPoint(x: x, y: 2), from: .zero, operation: .sourceOver, fraction: 1)
@@ -69,6 +98,7 @@ MainActor.assumeIsolated {
         }
     }
     let settings = Settings()
+    settings.range = range
     for module in Module.allCases {
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
             let host = NSHostingView(rootView: PopoverView(module: module, s: sampler, settings: settings))
@@ -94,5 +124,18 @@ MainActor.assumeIsolated {
             print(url.path, Int(size.width), "x", Int(size.height))
             window.orderOut(nil)
         }
+    }
+}
+
+/// Deterministic noise for the synthetic history (the same picture every run).
+struct SplitMix {
+    var state: UInt64
+    init(seed: UInt64) { state = seed }
+    mutating func next() -> Double {
+        state &+= 0x9E37_79B9_7F4A_7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return Double((z ^ (z >> 31)) >> 11) / Double(1 << 53)
     }
 }

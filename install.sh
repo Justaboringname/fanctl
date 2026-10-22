@@ -2,7 +2,7 @@
 # Installs fanctl as a root LaunchDaemon (fanctld) plus the StatMenu menu bar app.
 #   sudo ./install.sh              install / upgrade
 #   sudo ./install.sh uninstall    fans back to auto; removes both daemons, the binaries, the app,
-#                                  its settings, the control file and the log
+#                                  its settings and chart history, the control file and the log
 set -eu
 
 LABEL=com.justaboringname.fanctld
@@ -42,7 +42,8 @@ if [ "${1:-}" = uninstall ]; then
     launchctl bootout "system/$LABEL" 2>/dev/null || true  # daemon returns fans to auto on SIGTERM
     launchctl bootout "system/$POWER_LABEL" 2>/dev/null || true
     rm -f "$PLIST" "$POWER_PLIST" "$HELPER" /usr/local/bin/fanctl /var/log/fanctld.log /var/run/fanctl.status
-    sudo -u "$USER_NAME" rm -rf /Applications/StatMenu.app /Applications/FanMenu.app "$CTL_DIR"
+    sudo -u "$USER_NAME" rm -rf /Applications/StatMenu.app /Applications/FanMenu.app "$CTL_DIR" \
+        "$USER_HOME/Library/Application Support/StatMenu"  # chart history
     sudo -u "$USER_NAME" defaults delete com.justaboringname.statmenu 2>/dev/null || true
     echo "uninstalled (if you enabled 登录时启动, also check System Settings → General → Login Items)"
     exit 0

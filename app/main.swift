@@ -12,10 +12,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var popovers: [Module: NSPopover] = [:]
     private var hosts: [Module: NSHostingController<PopoverView>] = [:]
     private var drawn: [Module: String] = [:]  // signature of the image each item currently shows
+    /// Menu bar light/dark changes (e.g. with the wallpaper): an alerting item's image is not a
+    /// template, so it has to be redrawn in the new text colour.
+    private var appearanceObservers: [Module: NSKeyValueObservation] = [:]
     private var bag = Set<AnyCancellable>()
+    private var lastSave = Date()
+    private var sigterm: DispatchSourceSignal?
+
+    /// The charts' long-range history (LongHistory), kept across launches and reboots.
+    static let historyFile = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("StatMenu/history.plist")
 
     func applicationDidFinishLaunching(_ note: Notification) {
-        sampler = Sampler(interval: settings.interval)
+        sampler = Sampler(interval: settings.interval, historyFile: Self.historyFile)
         if !sampler.ok {
             let alert = NSAlert()
             alert.messageText = "无法读取 SMC / IOReport"
@@ -23,9 +32,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         settings.$interval.dropFirst().sink { [weak self] in self?.sampler.interval = $0 }.store(in: &bag)
         settings.onModulesChanged = { [weak self] in self?.rebuildItems() }
-        sampler.onSample = { [weak self] in self?.updateItems(); self?.resizePopovers() }
+        sampler.onSample = { [weak self] in self?.updateItems(); self?.resizePopovers(); self?.saveEvery(300) }
         rebuildItems()
         sampler.sample()
+        // Save the history before the Mac sleeps or shuts down, and on SIGTERM (pkill, install.sh),
+        // which would otherwise end the process without applicationWillTerminate.
+        for name in [NSWorkspace.willSleepNotification, NSWorkspace.willPowerOffNotification] {
+            NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.sampler.saveHistory() }
+            }
+        }
+        signal(SIGTERM, SIG_IGN)
+        let src = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        src.setEventHandler { [weak self] in
+            MainActor.assumeIsolated { self?.sampler.saveHistory() }
+            exit(0)
+        }
+        src.resume()
+        sigterm = src
+    }
+
+    func applicationWillTerminate(_ note: Notification) { sampler.saveHistory() }
+
+    private func saveEvery(_ seconds: TimeInterval) {
+        guard Date().timeIntervalSince(lastSave) >= seconds else { return }
+        lastSave = Date()
+        sampler.saveHistory()
     }
 
     private func rebuildItems() {
@@ -41,11 +73,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 item.button?.action = #selector(toggle(_:))
                 item.button?.tag = Module.allCases.firstIndex(of: m)!
                 items[m] = item
+                appearanceObservers[m] = item.button?.observe(\.effectiveAppearance) { [weak self] _, _ in
+                    MainActor.assumeIsolated { self?.updateItems() }
+                }
             } else if !settings.enabled.contains(m), let item = items[m] {
                 popovers[m]?.performClose(nil)
                 NSStatusBar.system.removeStatusItem(item)
                 items[m] = nil
                 drawn[m] = nil
+                appearanceObservers[m] = nil
             }
         }
         updateItems()
@@ -57,24 +93,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             typealias Seg = StatusImage.Segment
             let arrowUp = "↑\u{2009}", arrowDown = "↓\u{2009}"  // thin space after the arrows
             let image: (image: NSImage, signature: String)
+            let look = item.button?.effectiveAppearance
             switch m {
             case .network:
                 image = StatusImage.make(label: "NET", segments: [Seg(text: arrowUp + Fmt.rate(n.tx), key: "net.tx"),
                                                                   Seg(text: arrowDown + Fmt.rate(n.rx), key: "net.rx")])
             case .cpu:
-                image = StatusImage.make(label: "CPU", segments: [Seg(text: Fmt.pct(n.cpuTotal), key: "cpu.pct"),
-                                                                  Seg(text: Fmt.watts(n.cpuW), key: "cpu.w")])
+                image = StatusImage.make(label: "CPU", segments: [Seg(text: Fmt.pct(n.cpuTotal), key: "cpu.pct", level: n.cpuLevel),
+                                                                  Seg(text: Fmt.watts(n.cpuW), key: "cpu.w")], appearance: look)
             case .gpu:
-                image = StatusImage.make(label: "GPU", segments: [Seg(text: Fmt.pct(n.gpuUtil), key: "gpu.pct"),
-                                                                  Seg(text: Fmt.watts(n.gpuW), key: "gpu.w")])
+                image = StatusImage.make(label: "GPU", segments: [Seg(text: Fmt.pct(n.gpuUtil), key: "gpu.pct", level: n.gpuLevel),
+                                                                  Seg(text: Fmt.watts(n.gpuW), key: "gpu.w")], appearance: look)
             case .memory:
-                image = StatusImage.make(label: "MEM", segments: [Seg(text: Fmt.pct(n.memPressure), key: "mem.pct"),
-                                                                  Seg(text: Fmt.watts(n.dramW), key: "mem.w")])
+                image = StatusImage.make(label: "MEM", segments: [Seg(text: Fmt.pct(n.memPressure), key: "mem.pct", level: n.memLevel),
+                                                                  Seg(text: Fmt.watts(n.dramW), key: "mem.w")], appearance: look)
             case .sensors:
                 image = StatusImage.make(label: nil, symbol: n.fans.contains(where: \.manual) ? "fan.fill" : "thermometer.medium",
-                                         segments: [Seg(text: Fmt.temp(n.cpuTemp), key: "sns.cpu", label: "CPU"),
-                                                    Seg(text: Fmt.temp(n.gpuTemp), key: "sns.gpu", label: "GPU"),
-                                                    Seg(text: Fmt.watts(n.bodyW), key: "sns.w")])
+                                         segments: [Seg(text: Fmt.temp(n.cpuTemp), key: "sns.cpu", label: "CPU", level: n.cpuTempLevel),
+                                                    Seg(text: Fmt.temp(n.gpuTemp), key: "sns.gpu", label: "GPU", level: n.gpuTempLevel),
+                                                    Seg(text: Fmt.watts(n.bodyW), key: "sns.w")], appearance: look)
             }
             guard drawn[m] != image.signature else { continue }  // unchanged: don't wake MenuBarAgent
             drawn[m] = image.signature
@@ -84,12 +121,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func accessibilityText(_ m: Module, _ n: Snapshot) -> String {
-        switch m {
-        case .cpu: "CPU \(Fmt.pct(n.cpuTotal)) \(Fmt.watts(n.cpuW))"
-        case .gpu: "GPU \(Fmt.pct(n.gpuUtil)) \(Fmt.watts(n.gpuW))"
-        case .memory: "内存压力 \(Fmt.pct(n.memPressure)) \(Fmt.watts(n.dramW))"
+        func alert(_ l: Level) -> String { l == .critical ? "（过高）" : l == .warn ? "（偏高）" : "" }
+        return switch m {
+        case .cpu: "CPU \(Fmt.pct(n.cpuTotal))\(alert(n.cpuLevel)) \(Fmt.watts(n.cpuW))"
+        case .gpu: "GPU \(Fmt.pct(n.gpuUtil))\(alert(n.gpuLevel)) \(Fmt.watts(n.gpuW))"
+        case .memory: "内存压力 \(Fmt.pct(n.memPressure))\(alert(n.memLevel)) \(Fmt.watts(n.dramW))"
         case .network: "上传 \(Fmt.rate(n.tx)) 下载 \(Fmt.rate(n.rx))"
-        case .sensors: "CPU \(Fmt.temp(n.cpuTemp)) GPU \(Fmt.temp(n.gpuTemp)) Mac 本体 \(Fmt.watts(n.bodyW))"
+        case .sensors: "CPU \(Fmt.temp(n.cpuTemp))\(alert(n.cpuTempLevel)) GPU \(Fmt.temp(n.gpuTemp))\(alert(n.gpuTempLevel)) Mac 本体 \(Fmt.watts(n.bodyW))"
         }
     }
 
