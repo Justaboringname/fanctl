@@ -450,7 +450,7 @@ struct CPUView: View {
     var body: some View {
         let n = s.now, r = settings.range
         VStack(alignment: .leading, spacing: 10) {
-            StatHeader(title: "CPU", stats: [Stat("占用率", Fmt.pct(n.cpuTotal)), Stat("功耗", Fmt.watts(n.cpuW), n.cpuLevel)])
+            StatHeader(title: "CPU", stats: [Stat("占用率", Fmt.pct(n.cpuTotal)), Stat("功耗", Fmt.watts(n.cpuW), settings.shown(n.cpuLevel))])
             HistoryChart(line: s.line(.cpu, r), maxValue: 1, format: { Fmt.pct($0) })
             HStack(spacing: 14) {
                 Row(label: "用户", value: Fmt.pct(n.cpuUser), color: .accentColor)
@@ -498,7 +498,7 @@ struct GPUView: View {
     var body: some View {
         let n = s.now, r = settings.range
         VStack(alignment: .leading, spacing: 10) {
-            StatHeader(title: "GPU", stats: [Stat("占用率", Fmt.pct(n.gpuUtil)), Stat("功耗", Fmt.watts(n.gpuW), n.gpuLevel)])
+            StatHeader(title: "GPU", stats: [Stat("占用率", Fmt.pct(n.gpuUtil)), Stat("功耗", Fmt.watts(n.gpuW), settings.shown(n.gpuLevel))])
             HistoryChart(line: s.line(.gpu, r), color: .purple, maxValue: 1, format: { Fmt.pct($0) })
             VStack(spacing: 3) {
                 Row(label: "渲染器", value: Fmt.pct(n.gpuRenderer))
@@ -520,7 +520,7 @@ struct MemoryView: View {
         let n = s.now, r = settings.range
         let pressure: (String, Color) = n.memLevel == .critical ? ("严重", .red) : n.memLevel == .warn ? ("警告", .yellow) : ("正常", .green)
         VStack(alignment: .leading, spacing: 10) {
-            StatHeader(title: "内存", stats: [Stat("压力", Fmt.pct(n.memPressure), n.memLevel),
+            StatHeader(title: "内存", stats: [Stat("压力", Fmt.pct(n.memPressure), settings.shown(n.memLevel)),
                                               Stat("已用", "\(Fmt.bytes(n.memUsed)) / \(Fmt.bytes(n.memTotal))"),
                                               Stat("DRAM 功耗", Fmt.watts(n.dramW))])
             // Activity Monitor's pressure graph: height = 100 − kern.memorystatus_level, colour = level.
@@ -637,7 +637,7 @@ struct SensorsView: View {
     var body: some View {
         let n = s.now, r = settings.range
         VStack(alignment: .leading, spacing: 10) {
-            StatHeader(title: "传感器", stats: [Stat("CPU", Fmt.temp(n.cpuTemp), n.cpuTempLevel), Stat("GPU", Fmt.temp(n.gpuTemp), n.gpuTempLevel),
+            StatHeader(title: "传感器", stats: [Stat("CPU", Fmt.temp(n.cpuTemp), settings.shown(n.cpuTempLevel)), Stat("GPU", Fmt.temp(n.gpuTemp), settings.shown(n.gpuTempLevel)),
                                                Stat("Mac 本体", Fmt.watts(n.bodyW))])
             Section(title: "温度") {
                 Row(label: "CPU（最高 / 平均）", value: "\(Fmt.temp(n.cpuTemp)) / \(Fmt.temp(n.cpuTempAvg))", color: .blue)
@@ -807,6 +807,7 @@ struct PopoverFooter: View {
                                                   set: { settings.setEnabled(m, $0) }))
                 }
                 Divider()
+                Toggle("告警高亮", isOn: $settings.alerts)
                 Picker("刷新间隔", selection: $settings.interval) {
                     Text("1 秒").tag(1.0); Text("2 秒").tag(2.0); Text("5 秒").tag(5.0)
                 }
@@ -828,6 +829,9 @@ final class Settings: ObservableObject {
     @Published private(set) var enabled: Set<Module>
     @Published var interval: Double { didSet { UserDefaults.standard.set(interval, forKey: "interval") } }
     @Published var range: HistoryRange { didSet { UserDefaults.standard.set(range.rawValue, forKey: "historyRange") } }
+    /// Glass boxes around alerting items. Off by default: the user found them out of place in the
+    /// menu bar after trying several looks; the levels are still computed (accessibility labels).
+    @Published var alerts: Bool { didSet { UserDefaults.standard.set(alerts, forKey: "alertBoxes") } }
     @Published private(set) var launchAtLogin = SMAppService.mainApp.status == .enabled
     /// The user turned StatMenu off under System Settings › Login Items; register() cannot override that.
     @Published private(set) var loginNeedsApproval = SMAppService.mainApp.status == .requiresApproval
@@ -839,7 +843,11 @@ final class Settings: ObservableObject {
         let iv = UserDefaults.standard.double(forKey: "interval")
         interval = iv > 0 ? iv : 2
         range = UserDefaults.standard.string(forKey: "historyRange").flatMap(HistoryRange.init) ?? .hour12
+        alerts = UserDefaults.standard.bool(forKey: "alertBoxes")
     }
+
+    /// `level` as drawn: nothing when 告警高亮 is off (STATMENU_PREVIEW_LEVEL shows it regardless).
+    func shown(_ level: Level) -> Level { alerts || Sampler.previewLevel != nil ? level : .normal }
 
     func setEnabled(_ m: Module, _ on: Bool) {
         if on { enabled.insert(m) } else if enabled.count > 1 { enabled.remove(m) }  // keep at least one item

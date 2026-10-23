@@ -41,19 +41,21 @@ MainActor.assumeIsolated {
     let n = sampler.now
     typealias Seg = StatusImage.Segment
     // The alert boxes are real glass views in the app; here the flat stand-in.
+    // Like the app with 告警高亮 off (its default): boxes only when RENDER_LEVEL forces them.
+    let lv: (Level) -> Level = { Sampler.previewLevel == nil ? .normal : $0 }
     @MainActor func strip() -> [(image: NSImage, boxes: [StatusImage.Box], signature: String)] {
         [
             StatusImage.make(label: "NET", segments: [Seg(text: "↑\u{2009}" + Fmt.rate(n.tx), key: "net.tx"),
                                                       Seg(text: "↓\u{2009}" + Fmt.rate(n.rx), key: "net.rx")]),
-            StatusImage.make(label: "CPU", segments: [Seg(text: Fmt.pct(n.cpuTotal), key: "cpu.pct", level: n.cpuLevel),
+            StatusImage.make(label: "CPU", segments: [Seg(text: Fmt.pct(n.cpuTotal), key: "cpu.pct", level: lv(n.cpuLevel)),
                                                       Seg(text: Fmt.watts(n.cpuW), key: "cpu.w")]),
-            StatusImage.make(label: "GPU", segments: [Seg(text: Fmt.pct(n.gpuUtil), key: "gpu.pct", level: n.gpuLevel),
+            StatusImage.make(label: "GPU", segments: [Seg(text: Fmt.pct(n.gpuUtil), key: "gpu.pct", level: lv(n.gpuLevel)),
                                                       Seg(text: Fmt.watts(n.gpuW), key: "gpu.w")]),
-            StatusImage.make(label: "MEM", segments: [Seg(text: Fmt.pct(n.memPressure), key: "mem.pct", level: n.memLevel),
+            StatusImage.make(label: "MEM", segments: [Seg(text: Fmt.pct(n.memPressure), key: "mem.pct", level: lv(n.memLevel)),
                                                       Seg(text: Fmt.watts(n.dramW), key: "mem.w")]),
             StatusImage.make(label: nil, symbol: "thermometer.medium",
-                             segments: [Seg(text: Fmt.temp(n.cpuTemp), key: "sns.cpu", label: "CPU", level: n.cpuTempLevel),
-                                        Seg(text: Fmt.temp(n.gpuTemp), key: "sns.gpu", label: "GPU", level: n.gpuTempLevel),
+                             segments: [Seg(text: Fmt.temp(n.cpuTemp), key: "sns.cpu", label: "CPU", level: lv(n.cpuTempLevel)),
+                                        Seg(text: Fmt.temp(n.gpuTemp), key: "sns.gpu", label: "GPU", level: lv(n.gpuTempLevel)),
                                         Seg(text: Fmt.watts(n.bodyW), key: "sns.w")]),
         ]
     }

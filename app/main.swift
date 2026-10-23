@@ -31,6 +31,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             alert.runModal()
         }
         settings.$interval.dropFirst().sink { [weak self] in self?.sampler.interval = $0 }.store(in: &bag)
+        // @Published fires before the value changes; redraw on the next turn of the run loop.
+        settings.$alerts.dropFirst().receive(on: RunLoop.main).sink { [weak self] _ in self?.updateItems() }.store(in: &bag)
         settings.onModulesChanged = { [weak self] in self?.rebuildItems() }
         sampler.onSample = { [weak self] in self?.updateItems(); self?.resizePopovers(); self?.saveEvery(300) }
         rebuildItems()
@@ -92,23 +94,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             typealias Seg = StatusImage.Segment
             let arrowUp = "↑\u{2009}", arrowDown = "↓\u{2009}"  // thin space after the arrows
             let image: (image: NSImage, boxes: [StatusImage.Box], signature: String)
+            let lv = settings.shown
             switch m {
             case .network:
                 image = StatusImage.make(label: "NET", segments: [Seg(text: arrowUp + Fmt.rate(n.tx), key: "net.tx"),
                                                                   Seg(text: arrowDown + Fmt.rate(n.rx), key: "net.rx")])
             case .cpu:
-                image = StatusImage.make(label: "CPU", segments: [Seg(text: Fmt.pct(n.cpuTotal), key: "cpu.pct", level: n.cpuLevel),
+                image = StatusImage.make(label: "CPU", segments: [Seg(text: Fmt.pct(n.cpuTotal), key: "cpu.pct", level: lv(n.cpuLevel)),
                                                                   Seg(text: Fmt.watts(n.cpuW), key: "cpu.w")])
             case .gpu:
-                image = StatusImage.make(label: "GPU", segments: [Seg(text: Fmt.pct(n.gpuUtil), key: "gpu.pct", level: n.gpuLevel),
+                image = StatusImage.make(label: "GPU", segments: [Seg(text: Fmt.pct(n.gpuUtil), key: "gpu.pct", level: lv(n.gpuLevel)),
                                                                   Seg(text: Fmt.watts(n.gpuW), key: "gpu.w")])
             case .memory:
-                image = StatusImage.make(label: "MEM", segments: [Seg(text: Fmt.pct(n.memPressure), key: "mem.pct", level: n.memLevel),
+                image = StatusImage.make(label: "MEM", segments: [Seg(text: Fmt.pct(n.memPressure), key: "mem.pct", level: lv(n.memLevel)),
                                                                   Seg(text: Fmt.watts(n.dramW), key: "mem.w")])
             case .sensors:
                 image = StatusImage.make(label: nil, symbol: n.fans.contains(where: \.manual) ? "fan.fill" : "thermometer.medium",
-                                         segments: [Seg(text: Fmt.temp(n.cpuTemp), key: "sns.cpu", label: "CPU", level: n.cpuTempLevel),
-                                                    Seg(text: Fmt.temp(n.gpuTemp), key: "sns.gpu", label: "GPU", level: n.gpuTempLevel),
+                                         segments: [Seg(text: Fmt.temp(n.cpuTemp), key: "sns.cpu", label: "CPU", level: lv(n.cpuTempLevel)),
+                                                    Seg(text: Fmt.temp(n.gpuTemp), key: "sns.gpu", label: "GPU", level: lv(n.gpuTempLevel)),
                                                     Seg(text: Fmt.watts(n.bodyW), key: "sns.w")])
             }
             guard drawn[m] != image.signature else { continue }  // unchanged: don't wake MenuBarAgent
