@@ -144,9 +144,9 @@ enum StatusImage {
 }
 
 /// The alert boxes of one status item: untinted clear Liquid Glass (NSGlassEffectView, macOS 26+)
-/// with a thin pink rim, placed behind the status button in its superview, so the item's text stays
+/// with a thin red rim, placed behind the status button in its superview, so the item's text stays
 /// the menu bar's own template rendering on top. Picked live by the user over tinting the glass
-/// itself (yellow / red / pink washes all looked muddy over the wallpaper) and over pink text.
+/// itself (yellow / red / pink washes all looked muddy over the wallpaper) and over coloured text.
 /// Older systems get a faint translucent rectangle with the same rim.
 @MainActor
 final class AlertBoxes {
@@ -195,7 +195,7 @@ final class AlertBoxes {
         }
     }
 
-    static let rim = NSColor(srgbRed: 1, green: 0.5, blue: 0.75, alpha: 0.9)
+    static let rim = NSColor.systemRed.withAlphaComponent(0.9)
     static let rimWidth: CGFloat = 1.7  // 1.2 + one Retina pixel, at the user's request
     /// Pre-macOS 26 stand-in for the glass, also used by the render tool (it cannot capture glass).
     static let flatFill = NSColor.white.withAlphaComponent(0.22)

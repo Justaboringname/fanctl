@@ -344,7 +344,7 @@ struct StatHeader: View {
     }
 }
 
-/// A value in its alert box: the same clear Liquid Glass with a pink rim as the menu bar item. The padding
+/// A value in its alert box: the same clear Liquid Glass with a red rim as the menu bar item. The padding
 /// grows the glass past the text and the negative padding gives that space back, so switching it on
 /// or off never moves the text or resizes the popover.
 struct AlertValue: View {
