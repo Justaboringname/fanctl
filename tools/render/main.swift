@@ -66,7 +66,10 @@ MainActor.assumeIsolated {
             for (icon, boxes, _) in icons {
                 for b in boxes {
                     AlertBoxes.flatFill.setFill()
-                    NSBezierPath(roundedRect: b.rect.offsetBy(dx: x, dy: 2), xRadius: StatusImage.boxRadius, yRadius: StatusImage.boxRadius).fill()
+                    let path = NSBezierPath(roundedRect: b.rect.offsetBy(dx: x, dy: 2).insetBy(dx: AlertBoxes.rimWidth / 2, dy: AlertBoxes.rimWidth / 2),
+                                            xRadius: StatusImage.boxRadius, yRadius: StatusImage.boxRadius)
+                    path.fill()
+                    AlertBoxes.rim.setStroke(); path.lineWidth = AlertBoxes.rimWidth; path.stroke()
                 }
                 // Template images are tinted by the menu bar; emulate by masking with the foreground colour.
                 let tinted = NSImage(size: icon.size, flipped: false) { r in

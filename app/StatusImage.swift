@@ -143,10 +143,11 @@ enum StatusImage {
     }
 }
 
-/// The alert boxes of one status item: clear Liquid Glass (NSGlassEffectView, macOS 26+) with a light
-/// red tint (the user tried yellow / red at full strength and frosted glass, and settled on clear
-/// glass with "a little red"), placed behind the status button in its superview, so the item's text
-/// stays the menu bar's own template rendering on top. Older systems get a translucent red rectangle.
+/// The alert boxes of one status item: untinted clear Liquid Glass (NSGlassEffectView, macOS 26+)
+/// with a thin pink rim, placed behind the status button in its superview, so the item's text stays
+/// the menu bar's own template rendering on top. Picked live by the user over tinting the glass
+/// itself (yellow / red / pink washes all looked muddy over the wallpaper) and over pink text.
+/// Older systems get a faint translucent rectangle with the same rim.
 @MainActor
 final class AlertBoxes {
     private let button: NSStatusBarButton
@@ -187,28 +188,44 @@ final class AlertBoxes {
         for (v, box) in zip(views, boxes) {
             if v.superview !== host { host.addSubview(v, positioned: .below, relativeTo: button) }
             let rect = box.rect.offsetBy(dx: origin.x, dy: origin.y)
-            if v.frame != rect { v.frame = rect }
+            if v.frame != rect {
+                v.frame = rect
+                v.subviews.forEach { $0.frame = v.bounds }
+            }
         }
     }
 
-    static let tint = NSColor.systemRed.withAlphaComponent(0.25)
-    /// Pre-macOS 26 stand-in, also used by the render tool (it cannot capture glass).
-    static let flatFill = NSColor.systemRed.withAlphaComponent(0.3)
+    static let rim = NSColor(srgbRed: 1, green: 0.5, blue: 0.75, alpha: 0.9)
+    static let rimWidth: CGFloat = 1.7  // 1.2 + one Retina pixel, at the user's request
+    /// Pre-macOS 26 stand-in for the glass, also used by the render tool (it cannot capture glass).
+    static let flatFill = NSColor.white.withAlphaComponent(0.22)
 
+    /// The glass with the rim on top, both filling a container that `layout()` positions.
     private static func makeView() -> NSView {
         let radius = StatusImage.boxRadius
+        let box = NSView()
+        let glass: NSView
         if #available(macOS 26, *) {
             let g = NSGlassEffectView()
             g.style = .clear
-            g.tintColor = tint
             g.cornerRadius = radius
-            return g
+            glass = g
+        } else {
+            glass = NSView()
+            glass.wantsLayer = true
+            glass.layer?.backgroundColor = flatFill.cgColor
+            glass.layer?.cornerRadius = radius
         }
-        let v = NSView()
-        v.wantsLayer = true
-        v.layer?.backgroundColor = flatFill.cgColor
-        v.layer?.cornerRadius = radius
-        return v
+        let edge = NSView()
+        edge.wantsLayer = true
+        edge.layer?.cornerRadius = radius
+        edge.layer?.borderWidth = rimWidth
+        edge.layer?.borderColor = rim.cgColor
+        for v in [glass, edge] {
+            v.autoresizingMask = [.width, .height]
+            box.addSubview(v)
+        }
+        return box
     }
 }
 
