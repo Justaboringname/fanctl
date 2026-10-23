@@ -344,7 +344,7 @@ struct StatHeader: View {
     }
 }
 
-/// A value in its alert box: the same clear Liquid Glass as the menu bar item. The padding
+/// A value in its alert box: the same red-tinted clear Liquid Glass as the menu bar item. The padding
 /// grows the glass past the text and the negative padding gives that space back, so switching it on
 /// or off never moves the text or resizes the popover.
 struct AlertValue: View {
@@ -357,7 +357,7 @@ struct AlertValue: View {
             Text(text)
         } else if #available(macOS 26, *), !Self.flat {
             Text(text).padding(.horizontal, 5).padding(.vertical, 1)
-                .glassEffect(.clear, in: RoundedRectangle(cornerRadius: 6))
+                .glassEffect(.clear.tint(Color(nsColor: AlertBoxes.tint)), in: RoundedRectangle(cornerRadius: 6))
                 .padding(.horizontal, -5).padding(.vertical, -1)
         } else {
             Text(text).background {

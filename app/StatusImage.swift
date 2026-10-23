@@ -143,10 +143,10 @@ enum StatusImage {
     }
 }
 
-/// The alert boxes of one status item: clear Liquid Glass (NSGlassEffectView, macOS 26+, untinted —
-/// the user tried yellow / red tints and preferred plain glass), placed behind the status button in
-/// its superview, so the item's text stays the menu bar's own template rendering on top. Older
-/// systems get a faint translucent rounded rectangle.
+/// The alert boxes of one status item: clear Liquid Glass (NSGlassEffectView, macOS 26+) with a light
+/// red tint (the user tried yellow / red at full strength and frosted glass, and settled on clear
+/// glass with "a little red"), placed behind the status button in its superview, so the item's text
+/// stays the menu bar's own template rendering on top. Older systems get a translucent red rectangle.
 @MainActor
 final class AlertBoxes {
     private let button: NSStatusBarButton
@@ -191,14 +191,16 @@ final class AlertBoxes {
         }
     }
 
+    static let tint = NSColor.systemRed.withAlphaComponent(0.25)
     /// Pre-macOS 26 stand-in, also used by the render tool (it cannot capture glass).
-    static let flatFill = NSColor.white.withAlphaComponent(0.22)
+    static let flatFill = NSColor.systemRed.withAlphaComponent(0.3)
 
     private static func makeView() -> NSView {
         let radius = StatusImage.boxRadius
         if #available(macOS 26, *) {
             let g = NSGlassEffectView()
             g.style = .clear
+            g.tintColor = tint
             g.cornerRadius = radius
             return g
         }
