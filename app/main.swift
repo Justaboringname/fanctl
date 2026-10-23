@@ -12,9 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var popovers: [Module: NSPopover] = [:]
     private var hosts: [Module: NSHostingController<PopoverView>] = [:]
     private var drawn: [Module: String] = [:]  // signature of the image each item currently shows
-    /// Menu bar light/dark changes (e.g. with the wallpaper): an alerting item's image is not a
-    /// template, so it has to be redrawn in the new text colour.
-    private var appearanceObservers: [Module: NSKeyValueObservation] = [:]
+    private var alertBoxes: [Module: AlertBoxes] = [:]
     private var bag = Set<AnyCancellable>()
     private var lastSave = Date()
     private var sigterm: DispatchSourceSignal?
@@ -24,6 +22,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         .appendingPathComponent("StatMenu/history.plist")
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        // Debugging the alert boxes live: STATMENU_PREVIEW_LEVEL=warn|critical shows every alert.
+        Sampler.previewLevel = ["warn": Level.warn, "critical": .critical][ProcessInfo.processInfo.environment["STATMENU_PREVIEW_LEVEL"] ?? ""]
         sampler = Sampler(interval: settings.interval, historyFile: Self.historyFile)
         if !sampler.ok {
             let alert = NSAlert()
@@ -73,15 +73,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 item.button?.action = #selector(toggle(_:))
                 item.button?.tag = Module.allCases.firstIndex(of: m)!
                 items[m] = item
-                appearanceObservers[m] = item.button?.observe(\.effectiveAppearance) { [weak self] _, _ in
-                    MainActor.assumeIsolated { self?.updateItems() }
-                }
+                if let button = item.button { alertBoxes[m] = AlertBoxes(button: button) }
             } else if !settings.enabled.contains(m), let item = items[m] {
                 popovers[m]?.performClose(nil)
                 NSStatusBar.system.removeStatusItem(item)
                 items[m] = nil
                 drawn[m] = nil
-                appearanceObservers[m] = nil
+                alertBoxes[m]?.removeAll()
+                alertBoxes[m] = nil
             }
         }
         updateItems()
@@ -92,30 +91,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         for (m, item) in items {
             typealias Seg = StatusImage.Segment
             let arrowUp = "↑\u{2009}", arrowDown = "↓\u{2009}"  // thin space after the arrows
-            let image: (image: NSImage, signature: String)
-            let look = item.button?.effectiveAppearance
+            let image: (image: NSImage, boxes: [StatusImage.Box], signature: String)
             switch m {
             case .network:
                 image = StatusImage.make(label: "NET", segments: [Seg(text: arrowUp + Fmt.rate(n.tx), key: "net.tx"),
                                                                   Seg(text: arrowDown + Fmt.rate(n.rx), key: "net.rx")])
             case .cpu:
                 image = StatusImage.make(label: "CPU", segments: [Seg(text: Fmt.pct(n.cpuTotal), key: "cpu.pct", level: n.cpuLevel),
-                                                                  Seg(text: Fmt.watts(n.cpuW), key: "cpu.w")], appearance: look)
+                                                                  Seg(text: Fmt.watts(n.cpuW), key: "cpu.w")])
             case .gpu:
                 image = StatusImage.make(label: "GPU", segments: [Seg(text: Fmt.pct(n.gpuUtil), key: "gpu.pct", level: n.gpuLevel),
-                                                                  Seg(text: Fmt.watts(n.gpuW), key: "gpu.w")], appearance: look)
+                                                                  Seg(text: Fmt.watts(n.gpuW), key: "gpu.w")])
             case .memory:
                 image = StatusImage.make(label: "MEM", segments: [Seg(text: Fmt.pct(n.memPressure), key: "mem.pct", level: n.memLevel),
-                                                                  Seg(text: Fmt.watts(n.dramW), key: "mem.w")], appearance: look)
+                                                                  Seg(text: Fmt.watts(n.dramW), key: "mem.w")])
             case .sensors:
                 image = StatusImage.make(label: nil, symbol: n.fans.contains(where: \.manual) ? "fan.fill" : "thermometer.medium",
                                          segments: [Seg(text: Fmt.temp(n.cpuTemp), key: "sns.cpu", label: "CPU", level: n.cpuTempLevel),
                                                     Seg(text: Fmt.temp(n.gpuTemp), key: "sns.gpu", label: "GPU", level: n.gpuTempLevel),
-                                                    Seg(text: Fmt.watts(n.bodyW), key: "sns.w")], appearance: look)
+                                                    Seg(text: Fmt.watts(n.bodyW), key: "sns.w")])
             }
             guard drawn[m] != image.signature else { continue }  // unchanged: don't wake MenuBarAgent
             drawn[m] = image.signature
             item.button?.image = image.image
+            alertBoxes[m]?.show(image.boxes, imageSize: image.image.size)
             item.button?.setAccessibilityLabel(accessibilityText(m, n))
         }
     }

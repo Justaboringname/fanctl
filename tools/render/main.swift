@@ -40,33 +40,36 @@ MainActor.assumeIsolated {
     // Menu bar strip (same drawing code as the real status items), light and dark.
     let n = sampler.now
     typealias Seg = StatusImage.Segment
-    @MainActor func strip(_ look: NSAppearance?) -> [NSImage] {
+    // The alert boxes are real glass views in the app; here the flat stand-in.
+    @MainActor func strip() -> [(image: NSImage, boxes: [StatusImage.Box], signature: String)] {
         [
             StatusImage.make(label: "NET", segments: [Seg(text: "↑\u{2009}" + Fmt.rate(n.tx), key: "net.tx"),
                                                       Seg(text: "↓\u{2009}" + Fmt.rate(n.rx), key: "net.rx")]),
             StatusImage.make(label: "CPU", segments: [Seg(text: Fmt.pct(n.cpuTotal), key: "cpu.pct", level: n.cpuLevel),
-                                                      Seg(text: Fmt.watts(n.cpuW), key: "cpu.w")], appearance: look),
+                                                      Seg(text: Fmt.watts(n.cpuW), key: "cpu.w")]),
             StatusImage.make(label: "GPU", segments: [Seg(text: Fmt.pct(n.gpuUtil), key: "gpu.pct", level: n.gpuLevel),
-                                                      Seg(text: Fmt.watts(n.gpuW), key: "gpu.w")], appearance: look),
+                                                      Seg(text: Fmt.watts(n.gpuW), key: "gpu.w")]),
             StatusImage.make(label: "MEM", segments: [Seg(text: Fmt.pct(n.memPressure), key: "mem.pct", level: n.memLevel),
-                                                      Seg(text: Fmt.watts(n.dramW), key: "mem.w")], appearance: look),
+                                                      Seg(text: Fmt.watts(n.dramW), key: "mem.w")]),
             StatusImage.make(label: nil, symbol: "thermometer.medium",
                              segments: [Seg(text: Fmt.temp(n.cpuTemp), key: "sns.cpu", label: "CPU", level: n.cpuTempLevel),
                                         Seg(text: Fmt.temp(n.gpuTemp), key: "sns.gpu", label: "GPU", level: n.gpuTempLevel),
-                                        Seg(text: Fmt.watts(n.bodyW), key: "sns.w")], appearance: look),
-        ].map(\.image)
+                                        Seg(text: Fmt.watts(n.bodyW), key: "sns.w")]),
+        ]
     }
-    for (name, bg, fg, look) in [("light", NSColor(white: 0.93, alpha: 1), NSColor.black, NSAppearance.Name.aqua),
-                                 ("dark", NSColor(white: 0.12, alpha: 1), NSColor.white, .darkAqua)] {
-        let icons = strip(NSAppearance(named: look))
-        let spacing: CGFloat = 12, width = icons.reduce(0) { $0 + $1.size.width + spacing } + spacing
+    let icons = strip()
+    for (name, bg, fg) in [("light", NSColor(white: 0.93, alpha: 1), NSColor.black), ("dark", NSColor(white: 0.12, alpha: 1), NSColor.white)] {
+        let spacing: CGFloat = 12, width = icons.reduce(0) { $0 + $1.image.size.width + spacing } + spacing
         let img = NSImage(size: NSSize(width: width, height: 26), flipped: false) { rect in
             bg.setFill(); rect.fill()
             var x = spacing
-            for icon in icons {
-                // Template images are tinted by the menu bar; emulate by masking with the foreground
-                // colour. Alerting items are already coloured for this appearance.
-                let tinted = !icon.isTemplate ? icon : NSImage(size: icon.size, flipped: false) { r in
+            for (icon, boxes, _) in icons {
+                for b in boxes {
+                    AlertBoxes.flatFill.setFill()
+                    NSBezierPath(roundedRect: b.rect.offsetBy(dx: x, dy: 2), xRadius: StatusImage.boxRadius, yRadius: StatusImage.boxRadius).fill()
+                }
+                // Template images are tinted by the menu bar; emulate by masking with the foreground colour.
+                let tinted = NSImage(size: icon.size, flipped: false) { r in
                     icon.draw(in: r); fg.set(); r.fill(using: .sourceAtop); return true
                 }
                 tinted.draw(at: NSPoint(x: x, y: 2), from: .zero, operation: .sourceOver, fraction: 1)
@@ -99,6 +102,7 @@ MainActor.assumeIsolated {
     }
     let settings = Settings()
     settings.range = range
+    AlertValue.flat = true
     for module in Module.allCases {
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
             let host = NSHostingView(rootView: PopoverView(module: module, s: sampler, settings: settings))

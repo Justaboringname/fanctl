@@ -153,8 +153,6 @@ struct HistoryChart: View {
     let line: ChartLine
     var color: Color = .accentColor
     var maxValue: Double? = nil
-    /// Usage charts (0…1): tint the 70–90 % and 90–100 % bands, the menu bar's yellow / red zones.
-    var zones = false
     var format: (Double) -> String = { String(format: "%.0f", $0) }
     @StateObject private var hover = ChartHover()
 
@@ -163,12 +161,6 @@ struct HistoryChart: View {
         let top = maxValue ?? chartTop(line)
         let hovered = hover.shown(count: values.count)
         Chart {
-            if zones {
-                RectangleMark(yStart: .value("v", Level.warnUsage), yEnd: .value("v", Level.criticalUsage))
-                    .foregroundStyle(Level.warn.fill.opacity(0.10))
-                RectangleMark(yStart: .value("v", Level.criticalUsage), yEnd: .value("v", 1.0))
-                    .foregroundStyle(Level.critical.fill.opacity(0.10))
-            }
             ForEach(drawable(values), id: \.i) { p in
                 if let peaks {
                     // Long ranges: the line is each point's mean, the faint band above it reaches the
@@ -319,16 +311,7 @@ extension Array {
     subscript(safe i: Int) -> Element? { indices.contains(i) ? self[i] : nil }
 }
 
-extension Level {
-    /// The alert box colour, matching the menu bar's (system yellow / red).
-    var fill: Color { self == .critical ? .red : .yellow }
-    /// Text on that box: black reads on yellow, white on red.
-    var ink: Color { self == .critical ? .white : .black }
-    /// Core bars and similar fills: the accent colour until the level rises.
-    var bar: Color { self == .normal ? .accentColor : fill }
-}
-
-/// One headline number: a label above its value, which sits in a yellow / red box when alerting.
+/// One headline number: a label above its value, which sits in a glass box when alerting.
 struct Stat {
     let label: String, value: String
     var level: Level
@@ -361,18 +344,26 @@ struct StatHeader: View {
     }
 }
 
-/// A value in its alert box. The box is a background reaching past the text (negative padding), so
-/// switching it on or off never moves the text or resizes the popover.
+/// A value in its alert box: the same clear Liquid Glass as the menu bar item. The padding
+/// grows the glass past the text and the negative padding gives that space back, so switching it on
+/// or off never moves the text or resizes the popover.
 struct AlertValue: View {
+    /// Render tool only: cacheDisplay cannot capture glass (the whole header row comes out blank),
+    /// so draw the flat fallback instead.
+    static var flat = false
     let text: String, level: Level
     var body: some View {
-        Text(text)
-            .foregroundStyle(level == .normal ? Color.primary : level.ink)
-            .background {
-                if level != .normal {
-                    RoundedRectangle(cornerRadius: 5).fill(level.fill).padding(.horizontal, -4).padding(.vertical, -1)
-                }
+        if level == .normal {
+            Text(text)
+        } else if #available(macOS 26, *), !Self.flat {
+            Text(text).padding(.horizontal, 5).padding(.vertical, 1)
+                .glassEffect(.clear, in: RoundedRectangle(cornerRadius: 6))
+                .padding(.horizontal, -5).padding(.vertical, -1)
+        } else {
+            Text(text).background {
+                RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: AlertBoxes.flatFill)).padding(.horizontal, -5).padding(.vertical, -1)
             }
+        }
     }
 }
 
@@ -436,7 +427,7 @@ struct CoreBars: View {
                         ForEach(cores.filter { $0.cluster == cl.id }) { c in
                             ZStack(alignment: .bottom) {
                                 RoundedRectangle(cornerRadius: 1.5).fill(.quaternary)
-                                RoundedRectangle(cornerRadius: 1.5).fill(Level.usage(c.busy).bar)
+                                RoundedRectangle(cornerRadius: 1.5).fill(Color.accentColor)
                                     .frame(height: max(1, 26 * c.busy))
                             }
                             .frame(width: 9, height: 26)
@@ -456,8 +447,8 @@ struct CPUView: View {
     var body: some View {
         let n = s.now, r = settings.range
         VStack(alignment: .leading, spacing: 10) {
-            StatHeader(title: "CPU", stats: [Stat("占用率", Fmt.pct(n.cpuTotal), n.cpuLevel), Stat("功耗", Fmt.watts(n.cpuW))])
-            HistoryChart(line: s.line(.cpu, r), maxValue: 1, zones: true, format: { Fmt.pct($0) })
+            StatHeader(title: "CPU", stats: [Stat("占用率", Fmt.pct(n.cpuTotal)), Stat("功耗", Fmt.watts(n.cpuW), n.cpuLevel)])
+            HistoryChart(line: s.line(.cpu, r), maxValue: 1, format: { Fmt.pct($0) })
             HStack(spacing: 14) {
                 Row(label: "用户", value: Fmt.pct(n.cpuUser), color: .accentColor)
                 Row(label: "系统", value: Fmt.pct(n.cpuSystem), color: .red)
@@ -504,8 +495,8 @@ struct GPUView: View {
     var body: some View {
         let n = s.now, r = settings.range
         VStack(alignment: .leading, spacing: 10) {
-            StatHeader(title: "GPU", stats: [Stat("占用率", Fmt.pct(n.gpuUtil), n.gpuLevel), Stat("功耗", Fmt.watts(n.gpuW))])
-            HistoryChart(line: s.line(.gpu, r), color: .purple, maxValue: 1, zones: true, format: { Fmt.pct($0) })
+            StatHeader(title: "GPU", stats: [Stat("占用率", Fmt.pct(n.gpuUtil)), Stat("功耗", Fmt.watts(n.gpuW), n.gpuLevel)])
+            HistoryChart(line: s.line(.gpu, r), color: .purple, maxValue: 1, format: { Fmt.pct($0) })
             VStack(spacing: 3) {
                 Row(label: "渲染器", value: Fmt.pct(n.gpuRenderer))
                 Row(label: "Tiler", value: Fmt.pct(n.gpuTiler))

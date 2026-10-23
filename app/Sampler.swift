@@ -16,15 +16,27 @@ struct Cluster: Identifiable { let id: Character; let name: String; let count: I
 struct Fan: Identifiable { let id: Int; let actual, target, min, max: Double; let manual: Bool }
 struct Proc: Identifiable { let id: Int; let name: String; let value: Double }
 
-/// How alarming a reading is: drawn as a yellow / red rounded box behind the value, in the menu bar
-/// and the popover headers. Every threshold lives here so the two always agree.
+/// How alarming a reading is: anything above normal gets a Liquid Glass box, in the menu bar and the
+/// popover headers (warn and critical look the same; they differ in the accessibility label and
+/// in where the hysteresis releases). Every threshold lives here so the two always agree.
 enum Level: Int, Comparable {
     case normal, warn, critical
     static func < (a: Level, b: Level) -> Bool { a.rawValue < b.rawValue }
 
-    /// CPU / GPU usage (0…1): yellow from 70 %, red from 90 %.
-    static let warnUsage = 0.70, criticalUsage = 0.90
-    static func usage(_ v: Double, was: Level = .normal) -> Level { step(v, was, warn: warnUsage, critical: criticalUsage, back: 0.05) }
+    /// CPU / GPU load is judged by power, not usage: 100 % usage on a few cores or at low clocks is
+    /// not load. Yellow from 70 % of the chip's maximum, red from 90 %.
+    static let warnShare = 0.70, criticalShare = 0.90
+    static func power(_ w: Double, max: Double, was: Level = .normal) -> Level {
+        step(w / max, was, warn: warnShare, critical: criticalShare, back: 0.05)
+    }
+    /// Maximum draw measured on a Mac Studio M5 Max: CPU 92 W (18-thread Stockfish), GPU 118 W incl.
+    /// AFR (ray tracing + tensor kernels). Other Macs: `defaults write com.justaboringname.statmenu
+    /// cpuMaxW 40` (and gpuMaxW).
+    static let cpuMaxW = configured("cpuMaxW", 92), gpuMaxW = configured("gpuMaxW", 118)
+    private static func configured(_ key: String, _ fallback: Double) -> Double {
+        let v = UserDefaults.standard.double(forKey: key)
+        return v > 0 ? v : fallback
+    }
     /// Hottest CPU / GPU sensor: yellow from 85 °C, red from 95 °C (fanctld's guard trips at 100).
     static func temp(_ c: Double, was: Level = .normal) -> Level { step(c, was, warn: 85, critical: 95, back: 3) }
     /// kern.memorystatus_vm_pressure_level: 2 = warning, 4 = critical (the kernel's own hysteresis).
@@ -420,8 +432,8 @@ final class Sampler: ObservableObject {
             Fan(id: $0.offset, actual: Double($0.element.actual), target: Double($0.element.target),
                 min: Double($0.element.min), max: Double($0.element.max), manual: $0.element.manual != 0)
         }
-        snap.cpuLevel = Level.usage(snap.cpuTotal, was: now.cpuLevel)
-        snap.gpuLevel = Level.usage(snap.gpuUtil, was: now.gpuLevel)
+        snap.cpuLevel = Level.power(snap.cpuW, max: Level.cpuMaxW, was: now.cpuLevel)
+        snap.gpuLevel = Level.power(snap.gpuW, max: Level.gpuMaxW, was: now.gpuLevel)
         snap.memLevel = Level.pressure(snap.pressure)
         snap.cpuTempLevel = Level.temp(snap.cpuTemp, was: now.cpuTempLevel)
         snap.gpuTempLevel = Level.temp(snap.gpuTemp, was: now.gpuTempLevel)

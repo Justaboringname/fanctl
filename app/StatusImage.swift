@@ -1,7 +1,7 @@
 // Draws the menu bar items on one line: a small tag, then each value. Template image, so it
-// follows the menu bar's light/dark appearance — except while a value is alerting (yellow / red box
-// behind it), which needs colour. Everything is drawn at one opacity (mixed light/dark text looked
-// patchy) at full opacity; tags are told apart by their smaller, bolder font.
+// follows the menu bar's light/dark appearance. Everything is drawn at one opacity (mixed
+// light/dark text looked patchy) at full opacity; tags are told apart by their smaller, bolder font.
+// An alerting item also reports where its glass box goes (AlertBoxes draws it).
 import AppKit
 
 @MainActor
@@ -13,7 +13,8 @@ enum StatusImage {
         let key: String
         /// Small bold tag drawn right before the value ("CPU" in the sensors item).
         var label: String? = nil
-        /// Warn / critical: the value sits in a yellow / red rounded box.
+        /// Warn / critical: a glass box behind the whole item, or for a tagged value (the sensors
+        /// item's temperatures) behind the tag and value.
         var level: Level = .normal
     }
 
@@ -27,9 +28,10 @@ enum StatusImage {
     private static let tagGap: CGFloat = 3
     private static let valueGap: CGFloat = 8
     private static let alpha: CGFloat = 1
-    /// Alert box: this much wider than the value on each side, and this tall.
-    private static let boxPad: CGFloat = 3
-    private static let boxHeight: CGFloat = 16
+    /// Alert box: padding around what it encloses, height, corner radius.
+    private static let boxPad: CGFloat = 5
+    private static let boxHeight: CGFloat = 19
+    static let boxRadius: CGFloat = 6
 
     /// Item widths: grow at once, shrink only after the content has stayed narrower for a while, so
     /// the menu bar doesn't jitter every time a digit count changes.
@@ -49,91 +51,162 @@ enum StatusImage {
         return slot.width
     }
 
-    private enum Run { case text(NSAttributedString), image(NSImage), box(NSAttributedString, NSColor) }
+    private enum Run { case text(NSAttributedString), image(NSImage) }
 
-    /// Returns the image plus a signature of everything drawn in it; callers skip re-assigning an
-    /// identical image, because every status item update costs macOS's MenuBarAgent CPU time.
-    /// `appearance` is the status item button's: it picks the text colour while the image can't be
-    /// a template (a value is alerting).
-    static func make(label: String?, symbol: String? = nil, segments: [Segment],
-                     appearance: NSAppearance? = nil) -> (image: NSImage, signature: String) {
+    /// An alert box behind part of the item, in the image's coordinates.
+    struct Box: Equatable { let rect: NSRect; let level: Level }
+
+    /// Returns the image, where its alert boxes go, and a signature of everything drawn; callers
+    /// skip re-assigning an identical image, because every status item update costs macOS's
+    /// MenuBarAgent CPU time.
+    static func make(label: String?, symbol: String? = nil, segments: [Segment]) -> (image: NSImage, boxes: [Box], signature: String) {
         let height: CGFloat = 22
-        let colored = segments.contains { $0.level != .normal }
-        let dark = appearance?.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        let ink: NSColor = colored && dark ? .white : .black  // template images are drawn black, then tinted
-        func string(_ text: String, _ font: NSFont, _ color: NSColor = ink) -> NSAttributedString {
-            NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color.withAlphaComponent(alpha)])
-        }
-        /// System yellow / red in the menu bar's appearance (they differ slightly between light and dark).
-        func boxFill(_ level: Level) -> NSColor {
-            let c: NSColor = level == .critical ? .systemRed : .systemYellow
-            var out = c
-            (appearance ?? NSAppearance(named: .aqua)!).performAsCurrentDrawingAppearance { out = c.usingColorSpace(.sRGB) ?? c }
-            return out
+        func string(_ text: String, _ font: NSFont) -> NSAttributedString {
+            NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: NSColor.black.withAlphaComponent(alpha)])
         }
         func width(_ run: Run) -> CGFloat {
             switch run {
             case .text(let t): ceil(t.size().width)
             case .image(let i): i.size.width
-            case .box(let t, _): ceil(t.size().width) + 2 * boxPad
             }
         }
-        // Runs left to right, each with the gap before it.
-        var runs: [(run: Run, gap: CGFloat)] = []
-        var config = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
-        if colored { config = config.applying(.init(paletteColors: [ink])) }
-        if let symbol, let img = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(config) {
-            runs.append((.image(img), 0))
+        // Which alert box each part sits in (nil = none): the whole item when one of its untagged
+        // values alerts (CPU, GPU, MEM: "CPU 94% 48W" in one box), otherwise a tagged value together
+        // with its tag (each temperature in the sensors item is its own reading).
+        let itemLevel = segments.filter { $0.label == nil }.map(\.level).max() ?? .normal
+        func box(_ seg: Int?) -> (id: Int, level: Level)? {
+            if itemLevel != .normal { return (0, itemLevel) }
+            guard let seg, segments[seg].label != nil, segments[seg].level != .normal else { return nil }
+            return (seg + 1, segments[seg].level)
+        }
+        // Runs left to right: the run, the gap before it, and its segment (nil = the item's tag/icon).
+        var runs: [(run: Run, gap: CGFloat, seg: Int?)] = []
+        if let symbol, let img = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 13, weight: .regular)) {
+            runs.append((.image(img), 0, nil))
         } else if let label {
-            runs.append((.text(string(label, labelFont)), 0))
+            runs.append((.text(string(label, labelFont)), 0, nil))
         }
         for (i, seg) in segments.enumerated() {
             // The item's tag/icon binds to the first value; each later value starts a new group.
             let gap = i > 0 ? valueGap : runs.isEmpty ? 0 : tagGap
-            // Black on yellow, white on red: the menu bar's own text colour is unreadable on one of them.
-            let value: Run = seg.level == .normal ? .text(string(seg.text, valueFont))
-                : .box(string(seg.text, valueFont, seg.level == .critical ? .white : .black), boxFill(seg.level))
             if let tag = seg.label {
-                runs.append((.text(string(tag, labelFont)), gap))
-                runs.append((value, tagGap))
+                runs.append((.text(string(tag, labelFont)), gap, i))
+                runs.append((.text(string(seg.text, valueFont)), tagGap, i))
             } else {
-                runs.append((value, gap))
+                runs.append((.text(string(seg.text, valueFont)), gap, i))
             }
         }
-        let content = runs.reduce(0) { $0 + $1.gap + width($1.run) }
-        let total = itemWidth(segments.first?.key ?? label ?? symbol ?? "", content)
-        let signature = ([label ?? "", symbol ?? ""] + segments.map { ($0.label ?? "") + $0.text + "\($0.level.rawValue)" }
-                         + [colored ? (dark ? "dark" : "light") : "template", "\(total)"])
-            .joined(separator: "|")
-
         // One shared baseline for tags and values: centring each string's own box put the smaller
         // tag higher than the digits. Centre the digits' cap height, snapped to the pixel grid.
         let baseline = (round((height - valueFont.capHeight) / 2 * 2) / 2)
+        let mid = baseline + valueFont.capHeight / 2
+        let boxY = round((mid - boxHeight / 2) * 2) / 2
+        // Lay out left to right; a box adds its padding before its first run and after its last.
+        var xs: [CGFloat] = [], x: CGFloat = 0
+        var boxes: [Box] = []
+        for (k, r) in runs.enumerated() {
+            let here = box(r.seg), before = k > 0 ? box(runs[k - 1].seg) : nil
+            if before != nil, before?.id != here?.id { x += boxPad }  // close the previous box
+            x += r.gap
+            if let here, before?.id != here.id {
+                x += boxPad
+                boxes.append(Box(rect: NSRect(x: x - boxPad, y: boxY, width: 0, height: boxHeight), level: here.level))
+            }
+            xs.append(x)
+            x += width(r.run)
+            if here != nil {
+                let b = boxes.removeLast()
+                boxes.append(Box(rect: NSRect(x: b.rect.minX, y: boxY, width: x + boxPad - b.rect.minX, height: boxHeight), level: b.level))
+            }
+        }
+        if let last = runs.last, box(last.seg) != nil { x += boxPad }
+        let total = itemWidth(segments.first?.key ?? label ?? symbol ?? "", x)
+        let signature = ([label ?? "", symbol ?? ""] + segments.map { ($0.label ?? "") + $0.text + "\($0.level.rawValue)" } + ["\(total)"])
+            .joined(separator: "|")
+
         let drawn = NSImage(size: NSSize(width: total, height: height), flipped: false) { _ in
-            var x: CGFloat = 0
-            for (run, gap) in runs {
-                x += gap
-                switch run {
+            for (k, r) in runs.enumerated() {
+                switch r.run {
                 case .text(let t):
                     // Without .usesLineFragmentOrigin the rect's origin is the baseline of the line.
-                    t.draw(with: NSRect(x: x, y: baseline, width: 1000, height: height), options: [])
+                    t.draw(with: NSRect(x: xs[k], y: baseline, width: 1000, height: height), options: [])
                 case .image(let img):
-                    let mid = baseline + valueFont.capHeight / 2
-                    img.draw(in: NSRect(x: x, y: round((mid - img.size.height / 2) * 2) / 2,
+                    img.draw(in: NSRect(x: xs[k], y: round((mid - img.size.height / 2) * 2) / 2,
                                         width: img.size.width, height: img.size.height))
-                case .box(let t, let fill):
-                    let mid = baseline + valueFont.capHeight / 2
-                    fill.setFill()
-                    NSBezierPath(roundedRect: NSRect(x: x, y: round((mid - boxHeight / 2) * 2) / 2, width: width(run), height: boxHeight),
-                                 xRadius: 4, yRadius: 4).fill()
-                    t.draw(with: NSRect(x: x + boxPad, y: baseline, width: 1000, height: height), options: [])
                 }
-                x += width(run)
             }
             return true
         }
-        drawn.isTemplate = !colored
-        return (drawn, signature)
+        drawn.isTemplate = true
+        return (drawn, boxes, signature)
+    }
+}
+
+/// The alert boxes of one status item: clear Liquid Glass (NSGlassEffectView, macOS 26+, untinted —
+/// the user tried yellow / red tints and preferred plain glass), placed behind the status button in
+/// its superview, so the item's text stays the menu bar's own template rendering on top. Older
+/// systems get a faint translucent rounded rectangle.
+@MainActor
+final class AlertBoxes {
+    private let button: NSStatusBarButton
+    private var views: [NSView] = []
+    private var boxes: [StatusImage.Box] = []
+    private var imageSize = NSSize.zero
+    private var observer: NSObjectProtocol?
+
+    init(button: NSStatusBarButton) {
+        self.button = button
+        // The button resizes after its image changes (and the item moves when others change width);
+        // keep the boxes under the text.
+        button.postsFrameChangedNotifications = true
+        observer = NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: button,
+                                                          queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.layout() }
+        }
+    }
+
+    /// `boxes` are in the coordinates of an image of `imageSize`, which the button draws centred.
+    func show(_ boxes: [StatusImage.Box], imageSize: NSSize) {
+        self.imageSize = imageSize
+        if boxes.count != views.count {
+            views.forEach { $0.removeFromSuperview() }
+            views = boxes.map { _ in Self.makeView() }
+        }
+        self.boxes = boxes
+        layout()
+    }
+
+    func removeAll() { show([], imageSize: imageSize) }
+
+    private func layout() {
+        // A just-created status item's button may not be in its window yet; attach once it is.
+        guard let host = button.superview else { return }
+        let origin = NSPoint(x: button.frame.minX + round((button.bounds.width - imageSize.width) / 2),
+                             y: button.frame.minY + round((button.bounds.height - imageSize.height) / 2))
+        for (v, box) in zip(views, boxes) {
+            if v.superview !== host { host.addSubview(v, positioned: .below, relativeTo: button) }
+            let rect = box.rect.offsetBy(dx: origin.x, dy: origin.y)
+            if v.frame != rect { v.frame = rect }
+        }
+    }
+
+    /// Pre-macOS 26 stand-in, also used by the render tool (it cannot capture glass).
+    static let flatFill = NSColor.white.withAlphaComponent(0.22)
+
+    private static func makeView() -> NSView {
+        let radius = StatusImage.boxRadius
+        if #available(macOS 26, *) {
+            let g = NSGlassEffectView()
+            g.style = .clear
+            g.cornerRadius = radius
+            return g
+        }
+        let v = NSView()
+        v.wantsLayer = true
+        v.layer?.backgroundColor = flatFill.cgColor
+        v.layer?.cornerRadius = radius
+        return v
     }
 }
 
