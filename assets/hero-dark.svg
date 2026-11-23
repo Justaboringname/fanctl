@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="420" viewBox="0 0 1280 420" role="img" aria-labelledby="t">
+<title id="t">fanctl: fan control and a menu bar monitor for Apple Silicon. StatMenu and the fanctl command line write a control file; fanctld, a root daemon, reads it and drives the fans through the SMC.</title>
+<style>
+.sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.tx { fill: #ecece8; }
+.mu { fill: #9b9a94; }
+.clay { fill: #d97757; }
+.sage { fill: #9bb07c; }
+.eyebrow { font-size: 22px; letter-spacing: 4px; }
+.title { font-weight: 700; letter-spacing: -1.5px; }
+.tag { font-size: 28px; }
+.node { font-size: 24px; font-weight: 600; }
+.sub { font-size: 22px; }
+.cap { font-size: 22px; }
+.small { font-size: 20px; }
+.num { font-variant-numeric: tabular-nums; }
+</style>
+<rect x="0.5" y="0.5" width="1279" height="419" rx="20" fill="#181818" stroke="#2f2f2f" stroke-width="1"/>
+<text class="mono eyebrow mu" x="72" y="104">MACOS MENU BAR + CLI</text>
+<text class="sans title tx" x="68" y="190" style="font-size:76px">fanctl</text>
+<text class="sans tag mu" x="72" y="250">Fan control for Apple Silicon.</text>
+<text class="sans tag mu" x="72" y="290">Usage and power in the menu bar.</text>
+<text class="sans tag mu" x="72" y="330">Built for a Mac Studio M5 Max.</text>
+<g fill="none" stroke="#5a5955" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+<path d="M868 114 H890 C948.0 114 948.0 210 1006 210"/>
+<path d="M868 306 H890 C948.0 306 948.0 210 1006 210"/>
+</g>
+<rect x="668" y="64.0" width="200" height="100" rx="14" fill="#212121" stroke="#333332" stroke-width="1.5"/>
+<circle cx="690" cy="96.0" r="5" fill="#9bb07c"/>
+<text class="sans node tx" x="704" y="104.0">StatMenu</text>
+<text class="sans sub mu" x="704" y="136.0">menu bar app</text>
+<rect x="668" y="256.0" width="200" height="100" rx="14" fill="#212121" stroke="#333332" stroke-width="1.5"/>
+<circle cx="690" cy="288.0" r="5" fill="#9bb07c"/>
+<text class="sans node tx" x="704" y="296.0">fanctl</text>
+<text class="sans sub mu" x="704" y="328.0">command line</text>
+<text class="mono cap mu" x="1008" y="138.0">control file</text>
+<rect x="1006" y="160.0" width="210" height="100" rx="14" fill="#212121" stroke="#333332" stroke-width="1.5"/>
+<circle cx="1028" cy="192.0" r="5" fill="#d97757"/>
+<text class="sans node tx" x="1042" y="200.0">fanctld</text>
+<text class="sans sub mu" x="1042" y="232.0">root daemon</text>
+<text class="mono cap clay" x="1008" y="298.0">SMC · fans</text>
+</svg>

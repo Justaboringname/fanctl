@@ -1,4 +1,18 @@
-# fanctl + StatMenu
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.svg">
+  <img src="assets/hero-light.svg" width="100%" alt="fanctl：Apple Silicon 的风扇控制 + 菜单栏监控，写给 Mac Studio M5 Max。StatMenu 和 fanctl 命令行写同一个控制文件，以 root 运行的 fanctld 读取它，通过 SMC 调风扇。">
+</picture>
+
+<br>
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-788c5d?style=flat-square)](LICENSE)
+![C · Swift](https://img.shields.io/badge/code-C%20%C2%B7%20Swift-788c5d?style=flat-square)
+![Tested on M5 Max, macOS 27](https://img.shields.io/badge/tested%20on-M5%20Max%20%C2%B7%20macOS%2027-788c5d?style=flat-square)
+![macOS fan control + menu bar](https://img.shields.io/badge/macOS-fan%20control%20%2B%20menu%20bar-d97757?style=flat-square)
+
+</div>
 
 _Last updated: 2026-09-25_
 
@@ -13,7 +27,7 @@ _Last updated: 2026-09-25_
 
 <img src="docs/sensors.png" width="320" alt="传感器面板">
 
-> ⚠️ **只在一台机器上验证过**（Mac17,14，macOS 27）。温度传感器的 SMC 键、风扇协议在别的机型上可能不同。调风扇会写 SMC——后果自负。界面目前只有中文。
+> **注意：只在一台机器上验证过**（Mac17,14，macOS 27）。温度传感器的 SMC 键、风扇协议在别的机型上可能不同。调风扇会写 SMC——后果自负。界面目前只有中文。
 
 ## 安装
 
@@ -29,7 +43,7 @@ sudo ./install.sh uninstall    # 卸载：风扇交还自动，删掉上表所�
 `install.sh` 会装这些东西：
 
 | 位置 | 作用 |
-|---|---|
+|:--|:--|
 | `/Library/PrivilegedHelperTools/com.justaboringname.fanctld` | 后台服务运行的二进制（放在只有 root 能写的目录） |
 | `/usr/local/bin/fanctl` | 同一个二进制，给命令行用（`/usr/local/bin` 已存在时不改它的属主） |
 | `/Library/LaunchDaemons/com.justaboringname.fanctld.plist` | 风扇后台服务，读你的控制文件、执行调速和温度保护 |
@@ -49,39 +63,88 @@ fanctl auto                 # 交还系统自动控制
 fanctl dump [前缀]          # 列出 SMC 键（调试用），如 fanctl dump PU
 ```
 
-装了 `fanctld` 时 `set` / `auto` 不需要 sudo，设置会一直保持到你改回来。没装时需要 sudo，按 Ctrl-C 或 `--for 秒` 到期后自动交还；这时还可以用 `--guard °C` 改保护温度。
+`set` / `auto` 在装没装 `fanctld` 时的区别：
 
-**温度保护**（`fanctld` 和 `sudo fanctl set` 都有）：任何一个 CPU/GPU 传感器超过 100 °C，风扇立刻全速；最热的传感器降到 85 °C 以下后恢复你的设定。读不到任何温度传感器时交还系统自动控制。
+| | 装了 `fanctld` | 没装 |
+|:--|:--|:--|
+| sudo | 不需要 | 需要 |
+| 设置保持多久 | 一直保持到你改回来 | 按 Ctrl-C 或 `--for 秒` 到期后自动交还 |
+| 保护温度 | 固定 100 °C | 可以用 `--guard °C` 改 |
 
-`fanctld` 另外还会：连续 3 次（每秒一次）读不到风扇状态时交还自动；睡眠前交还自动，唤醒 3 秒后重新应用你的设定。
+**温度保护**（`fanctld` 和 `sudo fanctl set` 都有）：
+
+| 情况 | 风扇 |
+|:--|:--|
+| 任何一个 CPU/GPU 传感器超过 100 °C | 立刻全速 |
+| 最热的传感器降到 85 °C 以下 | 恢复你的设定 |
+| 读不到任何温度传感器 | 交还系统自动控制 |
+
+`fanctld` 另外还会：
+
+- **连续 3 次（每秒一次）读不到风扇状态时**，交还自动。
+- **睡眠前**交还自动，唤醒 3 秒后重新应用你的设定。
 
 ## StatMenu
 
 - **菜单栏**（从左到右）：`NET ↑上传 ↓下载`、`CPU 占用 功耗`、`GPU 占用 功耗`、`MEM 内存压力 功耗(DRAM)`（压力 = 活动监视器「内存压力」图的高度，即 `100 − kern.memorystatus_level`）、传感器（CPU/GPU 最高温度 + Mac 本体功耗）。手动调速时温度计图标变成风扇。
 - **面板**：历史曲线（鼠标悬停或拖动，显示该点的数值和时间），面板底部可切换 实时 / 1 / 6 / 12 / 24 小时；CPU 按簇（M5 Max：6 个超级核心 + 12 个性能核心）分列占用和功耗，各核心占用柱状图；占用最高、耗电最多、内存最多的进程；GPU 渲染/分块器利用率和显存；内存压力、交换、压缩；网络会话累计流量；风扇状态、预设档位和滑条。
 - **长时段曲线**：每个点是这段时间的平均值，上方淡色带是其中的峰值（24 小时的平均会抹平所有尖峰）；Mac 睡眠或 StatMenu 没运行的时段留空，不连线。数据按 10 秒（最近 2 小时）和 1 分钟（最近 24 小时）分桶，存在 `~/Library/Application Support/StatMenu/history.plist`（约 240 KB，每 5 分钟、睡眠前和退出时写一次），重启、重装都不丢。
-- **告警**：CPU / GPU 按**功耗占芯片最大功耗的比例**判断压力（占用率高不代表负载重：可能只开了几个核或频率很低），≥ 70% 算偏高、≥ 90% 算过高；最大功耗用这台 M5 Max 的实测值 CPU 92 W / GPU 118 W，别的 Mac 用 `defaults write com.justaboringname.statmenu cpuMaxW 40`（`gpuMaxW` 同理）改。内存看系统的内存压力等级（警告 / 严重），温度看 CPU / GPU 最热的传感器（≥ 85 °C / ≥ 95 °C，fanctld 的保护在 100 °C）。齿轮菜单里打开「告警高亮」（默认关）后，告警时菜单栏里整项（如 `CPU 94% 87W`）垫一块透明液态玻璃（`NSGlassEffectView` 的 clear 样式，不染色）并描一圈细红边（macOS 26 以前是半透明圆角块加红边），传感器项里只框住那一个温度，面板标题里对应的数值也一样。回落到比阈值低 5 个百分点（温度低 3 °C）才撤掉，免得在阈值附近每秒闪。调试：`STATMENU_PREVIEW_LEVEL=warn /Applications/StatMenu.app/Contents/MacOS/StatMenu` 强制显示告警样式。
-- 刷新间隔 1 / 2 / 5 秒可选。数据采集在后台线程；菜单栏图像没变化就不重绘（每次更新都要消耗 macOS MenuBarAgent 的 CPU）。
+- **刷新间隔** 1 / 2 / 5 秒可选。数据采集在后台线程；菜单栏图像没变化就不重绘（每次更新都要消耗 macOS MenuBarAgent 的 CPU）。
+
+### 告警
+
+| 项目 | 依据 | 偏高 | 过高 |
+|:--|:--|:-:|:-:|
+| CPU / GPU | **功耗占芯片最大功耗的比例** | ≥ 70% | ≥ 90% |
+| 内存 | 系统的内存压力等级 | 警告 | 严重 |
+| 温度 | CPU / GPU 最热的传感器 | ≥ 85 °C | ≥ 95 °C |
+
+- **CPU / GPU 看功耗，不看占用率。** 占用率高不代表负载重：可能只开了几个核或频率很低。
+- **最大功耗**用这台 M5 Max 的实测值 CPU 92 W / GPU 118 W，别的 Mac 用 `defaults write com.justaboringname.statmenu cpuMaxW 40`（`gpuMaxW` 同理）改。
+- **温度**：fanctld 的保护在 100 °C。
+- **「告警高亮」默认关**，在齿轮菜单里打开。打开后，告警时菜单栏里整项（如 `CPU 94% 87W`）垫一块透明液态玻璃（`NSGlassEffectView` 的 clear 样式，不染色）并描一圈细红边（macOS 26 以前是半透明圆角块加红边），传感器项里只框住那一个温度，面板标题里对应的数值也一样。
+- **回落**到比阈值低 5 个百分点（温度低 3 °C）才撤掉，免得在阈值附近每秒闪。
+- **调试**：`STATMENU_PREVIEW_LEVEL=warn /Applications/StatMenu.app/Contents/MacOS/StatMenu` 强制显示告警样式。
 
 ## 功耗是怎么测的（踩过的坑）
 
 **GPU 功耗 = `GPU Energy` + `AFR0`。** `AFR0` 是 GPU 到内存那段通路单独的一路供电：它有自己的 13 档调频（338–1620 MHz），档位只跟 GPU 的内存带宽走（电源协处理器里的 `agx-afr-bw` 策略，阈值单位 GB/s）。空闲和纯 CPU 负载时是 0，吃内存的 GPU 负载下能到 25 W 左右；不算它的话，GPU 功耗会比整机功耗的涨幅少一大截。
 
-**1. 按硬件时间戳算，不按轮询间隔。** CPU/GPU/DRAM/ANE 功耗来自 IOReport 的 “Energy Model” 能耗计数器（普通权限可读）。每个计数器自带更新时间戳，而且各自按自己的节奏批量更新（CPU/DRAM 约 1–2 秒一批，GPU 实时）。拿两次读数的差除以*轮询间隔*（macmon 的做法）会让 CPU 功耗在 0 和 2 倍之间来回跳；这里一律用计数器自己的时间戳差（`power_rate.h`，有单元测试）。间隔不到 0.25 秒的更新会并入下一个窗口，避免偶发的 10 ms 窄窗口造成尖峰。
+### 1. 按硬件时间戳算，不按轮询间隔
 
-**2. M5 / macOS 27 上，CPU/DRAM/ANE 计数器要有 root 的 `powermetrics` 在跑才会动。** 这个是卸掉 iStat Menus 之后才发现的：之前 CPU 功耗一直正常，只是因为 iStat 的后台一直开着 `powermetrics`。实测：
+CPU/GPU/DRAM/ANE 功耗来自 IOReport 的 “Energy Model” 能耗计数器（普通权限可读）。每个计数器自带更新时间戳，而且各自按自己的节奏批量更新（CPU/DRAM 约 1–2 秒一批，GPU 实时）。拿两次读数的差除以轮询间隔（macmon 的做法）会让 CPU 功耗在 0 和 2 倍之间来回跳；这里一律用计数器自己的时间戳差（`power_rate.h`，有单元测试）。间隔不到 0.25 秒的更新会并入下一个窗口，避免偶发的 10 ms 窄窗口造成尖峰。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/rate-dark.svg">
+  <img src="assets/rate-light.svg" width="100%" alt="示意图（不是实测数据）：能耗计数器每 2 秒批量更新一次，每批带自己的硬件时间戳；app 每秒轮询一次。能耗差除以轮询间隔，功耗在 0 和 2 倍之间来回跳；除以计数器自己的时间戳差，稳定在 1 倍。">
+</picture>
+
+### 2. M5 / macOS 27 上，CPU/DRAM/ANE 计数器要有 root 的 `powermetrics` 在跑才会动
+
+这个是卸掉 iStat Menus 之后才发现的：之前 CPU 功耗一直正常，只是因为 iStat 的后台一直开着 `powermetrics`。实测：
+
 - 没有 `powermetrics` 时，`CPU Energy` 的时间戳可以停在几十分钟前一动不动；GPU 不受影响。
 - `sudo powermetrics --samplers cpu_power -i 1000` 一开，立刻每 1.02 秒刷新一次，一关就停。
 - 用 IOReport 订阅**全部**约 1.1 万个通道并采样，root 或普通权限都**刷新不了**（`tools/triggerscan.c`）。`powermetrics` 自己也只开了 3 个 IOReportUserClient，没有打开其他服务，具体怎么触发的还没弄清。
 
 所以安装脚本单独装了一个 LaunchDaemon 跑 `powermetrics`，输出丢弃。代价约为单核 2.4%（整机 18 核的 0.13%）。不装它，CPU、内存（DRAM）、神经网络引擎功耗和「其他」一栏都显示「–」，命令行里是 N/A。
 
-**3. 整机功耗（SMC `PSTR`）包含 USB 口对外供电。** `PSTR` ≈ `PDTR` = `VD0R` × `ID0R`，是内置电源 12 V 直流输出那一侧（不含电源本身的转换损耗，插座上会再多一点）。它把 USB 口给外设的电也算进去了：把一盏接在 USB-C 口上、约 14 W 的台灯关掉 30 秒，`PSTR` 从 25.9 W 掉到 10.9 W（`PU1C` 从 14.1 W 掉到 0.3 W），多出的约 1 W 是 12 V→5 V 的转换损耗。所以 StatMenu 显示的「Mac 本体」= `PSTR` −（`PU1C`+`PU2C`+`PU3C`+`PUAC`）：
-- `PU1C` = `V5SC`（5.2 V）× `IU1C`，对应后面 USB-C 1–2 口（用台灯验证过）；`PU2C` 对应 3–4 口（和各口的 `DnJV`×`DnJI` 对得上）；`PU3C` / `PUAC` 推测是前面的 USB-C 和 USB-A（仅按命名推测，空载约 0.03 W）。
+### 3. 整机功耗（SMC `PSTR`）包含 USB 口对外供电
+
+`PSTR` ≈ `PDTR` = `VD0R` × `ID0R`，是内置电源 12 V 直流输出那一侧（不含电源本身的转换损耗，插座上会再多一点）。它把 USB 口给外设的电也算进去了：把一盏接在 USB-C 口上、约 14 W 的台灯关掉 30 秒，`PSTR` 从 25.9 W 掉到 10.9 W（`PU1C` 从 14.1 W 掉到 0.3 W），多出的约 1 W 是 12 V→5 V 的转换损耗。所以 StatMenu 显示的「Mac 本体」= `PSTR` −（`PU1C`+`PU2C`+`PU3C`+`PUAC`）：
+
+| 键 | 对应 | 依据 |
+|:--|:--|:--|
+| `PU1C` = `V5SC`（5.2 V）× `IU1C` | 后面 USB-C 1–2 口 | 用台灯验证过 |
+| `PU2C` | 3–4 口 | 和各口的 `DnJV`×`DnJI` 对得上 |
+| `PU3C` / `PUAC` | 推测是前面的 USB-C 和 USB-A | 仅按命名推测，空载约 0.03 W |
+
 - 这台机器空闲时 Mac 本体约 10–11 W（显示器开着）。苹果官方给的 M5 Max Mac Studio 空闲值是 7 W（插座端，只开 Finder，不接外设）。
 - Studio Display XDR 自带交流电源，不从 Mac 取电（接它的口 `D1JV` = 0 V），它的功耗 Mac 这边读不到。
 
-**4. 其他。** 网络字节计数器对没有特殊授权的进程只给 32 位（macOS 27 上只有 `netstat` 有 `com.apple.private.network.statistics`），所以只显示本次运行的累计流量。进程的 CPU 时间和能耗来自 `proc_pid_rusage`，普通权限只能读自己的进程。
+### 4. 其他
+
+网络字节计数器对没有特殊授权的进程只给 32 位（macOS 27 上只有 `netstat` 有 `com.apple.private.network.statistics`），所以只显示本次运行的累计流量。进程的 CPU 时间和能耗来自 `proc_pid_rusage`，普通权限只能读自己的进程。
 
 ## 实现要点
 
@@ -102,7 +165,7 @@ make tools       # 诊断工具：energyprobe、triggerscan、smcsample
 ```
 
 | 文件 | 内容 |
-|---|---|
+|:--|:--|
 | `smc.c` / `smc.h` | AppleSMC 读写 |
 | `metrics.c` / `metrics.h` | CPU、功耗（IOReport）、GPU、内存、网络、传感器、进程 |
 | `power_rate.h` | 按硬件时间戳计算功耗 |
@@ -115,4 +178,4 @@ make tools       # 诊断工具：energyprobe、triggerscan、smcsample
 
 ## License
 
-MIT
+[MIT](LICENSE)
